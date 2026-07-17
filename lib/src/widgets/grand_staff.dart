@@ -85,6 +85,9 @@ class GrandStaff extends StatefulWidget {
   /// maintaining a second visual layout.
   final ValueChanged<Note>? onNoteTap;
 
+  /// Reuses metadata loaded by a parent document renderer.
+  final SmuflMetadata? metadata;
+
   const GrandStaff({
     super.key,
     this.group,
@@ -93,8 +96,11 @@ class GrandStaff extends StatefulWidget {
     this.staffSpace = 12.0,
     this.staffGap,
     this.onNoteTap,
-  }) : assert(group != null || groups != null,
-            'Provide either group or groups');
+    this.metadata,
+  }) : assert(
+         group != null || groups != null,
+         'Provide either group or groups',
+       );
 
   List<StaffGroup> get _groups => groups ?? [group!];
 
@@ -109,8 +115,19 @@ class _GrandStaffState extends State<GrandStaff> {
   @override
   void initState() {
     super.initState();
-    _metadata = SmuflMetadata();
-    _metadataFuture = _metadata.load();
+    _metadata = widget.metadata ?? SmuflMetadata();
+    _metadataFuture = widget.metadata == null
+        ? _metadata.load()
+        : Future<void>.value();
+  }
+
+  @override
+  void didUpdateWidget(covariant GrandStaff oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.metadata != widget.metadata && widget.metadata != null) {
+      _metadata = widget.metadata!;
+      _metadataFuture = Future<void>.value();
+    }
   }
 
   double get _gap => widget.staffGap ?? widget.staffSpace * 11.0;
@@ -124,7 +141,9 @@ class _GrandStaffState extends State<GrandStaff> {
           return const Center(child: CircularProgressIndicator());
         }
         if (snapshot.hasError) {
-          return Center(child: Text('Failed to load metadata: ${snapshot.error}'));
+          return Center(
+            child: Text('Failed to load metadata: ${snapshot.error}'),
+          );
         }
         if (widget._groups.every((g) => g.staves.isEmpty)) {
           return const SizedBox.shrink();
@@ -132,7 +151,8 @@ class _GrandStaffState extends State<GrandStaff> {
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            final width = constraints.hasBoundedWidth && constraints.maxWidth.isFinite
+            final width =
+                constraints.hasBoundedWidth && constraints.maxWidth.isFinite
                 ? constraints.maxWidth
                 : 800.0;
             // Build the painter first so we can size to its (multi-system) height.
@@ -156,10 +176,7 @@ class _GrandStaffState extends State<GrandStaff> {
                         final note = painter.noteAt(details.localPosition);
                         if (note != null) widget.onNoteTap!(note);
                       },
-                child: CustomPaint(
-                  size: Size(width, height),
-                  painter: painter,
-                ),
+                child: CustomPaint(size: Size(width, height), painter: painter),
               ),
             );
           },

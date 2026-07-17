@@ -8,6 +8,76 @@ import '../smufl/smufl_metadata_loader.dart';
 import '../theme/music_score_theme.dart';
 import 'grand_staff.dart';
 
+/// Controls page navigation and the zoom transform for [PagedScoreView].
+class PagedScoreController extends ChangeNotifier {
+  final PageController pageController = PageController();
+  final Map<int, TransformationController> _transforms = {};
+
+  int currentPage = 0;
+  int pageCount = 0;
+
+  void setPageCount(int count) {
+    if (pageCount == count) return;
+    pageCount = count;
+    if (pageCount > 0 && currentPage >= pageCount) {
+      currentPage = pageCount - 1;
+    }
+    notifyListeners();
+  }
+
+  TransformationController transformationFor(int page) {
+    return _transforms.putIfAbsent(page, () {
+      final controller = TransformationController();
+      controller.addListener(() {
+        if (page == currentPage) notifyListeners();
+      });
+      return controller;
+    });
+  }
+
+  double get currentScale =>
+      transformationFor(currentPage).value.getMaxScaleOnAxis();
+
+  void setCurrentPage(int page) {
+    currentPage = page;
+    notifyListeners();
+  }
+
+  void zoomBy(double factor) {
+    final next = (currentScale * factor).clamp(1.0, 4.0).toDouble();
+    transformationFor(currentPage).value = Matrix4.diagonal3Values(
+      next,
+      next,
+      1.0,
+    );
+    notifyListeners();
+  }
+
+  void resetZoom() {
+    transformationFor(currentPage).value = Matrix4.identity();
+    notifyListeners();
+  }
+
+  void previousPage() {
+    if (currentPage > 0) pageController.jumpToPage(currentPage - 1);
+  }
+
+  void nextPage() {
+    if (currentPage + 1 < pageCount) {
+      pageController.jumpToPage(currentPage + 1);
+    }
+  }
+
+  @override
+  void dispose() {
+    pageController.dispose();
+    for (final transform in _transforms.values) {
+      transform.dispose();
+    }
+    super.dispose();
+  }
+}
+
 /// Displays a score as a sequence of fixed-ratio paper pages.
 ///
 /// The regular [GrandStaff] layout decides the measure breaks. Those systems
@@ -18,6 +88,7 @@ class PagedScoreView extends StatefulWidget {
   final MusicScoreTheme theme;
   final double staffSpace;
   final ValueChanged<Note>? onNoteTap;
+  final PagedScoreController? controller;
 
   /// Page size in points. A4 portrait is the default.
   final double pageWidth;
@@ -32,6 +103,7 @@ class PagedScoreView extends StatefulWidget {
     this.theme = const MusicScoreTheme(),
     this.staffSpace = 12.0,
     this.onNoteTap,
+    this.controller,
     this.pageWidth = 595.0,
     this.pageHeight = 842.0,
     this.pageMargin = 40.0,
@@ -46,12 +118,32 @@ class PagedScoreView extends StatefulWidget {
 class _PagedScoreViewState extends State<PagedScoreView> {
   late final SmuflMetadata _metadata;
   late final Future<void> _metadataFuture;
+  late PagedScoreController _controller;
+  var _ownsController = false;
 
   @override
   void initState() {
     super.initState();
     _metadata = SmuflMetadata();
     _metadataFuture = _metadata.load();
+    _controller = widget.controller ?? PagedScoreController();
+    _ownsController = widget.controller == null;
+  }
+
+  @override
+  void didUpdateWidget(covariant PagedScoreView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      if (_ownsController) _controller.dispose();
+      _controller = widget.controller ?? PagedScoreController();
+      _ownsController = widget.controller == null;
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_ownsController) _controller.dispose();
+    super.dispose();
   }
 
   @override
@@ -82,23 +174,51 @@ class _PagedScoreViewState extends State<PagedScoreView> {
             final margin = widget.pageMargin * width / widget.pageWidth;
             final systems = _systems(width - margin * 2.0);
             final pages = _pages(systems, _systemsPerPage());
+            if (_controller.pageCount != pages.length) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _controller.setPageCount(pages.length);
+              });
+            }
 
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final page in pages) ...[
-                  _ScorePage(
-                    systems: page,
-                    width: width,
-                    height: height,
-                    margin: margin,
-                    staffSpace: widget.staffSpace,
-                    theme: widget.theme,
-                    onNoteTap: widget.onNoteTap,
+            return SizedBox(
+              height:
+                  constraints.hasBoundedHeight && constraints.maxHeight.isFinite
+                  ? constraints.maxHeight
+                  : height + 24.0,
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) => PageView.builder(
+                  controller: _controller.pageController,
+                  itemCount: pages.length,
+                  physics: _controller.currentScale > 1.01
+                      ? const NeverScrollableScrollPhysics()
+                      : const PageScrollPhysics(),
+                  onPageChanged: _controller.setCurrentPage,
+                  itemBuilder: (context, index) => Center(
+                    child: InteractiveViewer(
+                      transformationController: _controller.transformationFor(
+                        index,
+                      ),
+                      minScale: 1.0,
+                      maxScale: 4.0,
+                      panEnabled: _controller.currentScale > 1.01,
+                      scaleEnabled: true,
+                      boundaryMargin: const EdgeInsets.all(200),
+                      clipBehavior: Clip.hardEdge,
+                      child: _ScorePage(
+                        systems: pages[index],
+                        width: width,
+                        height: height,
+                        margin: margin,
+                        staffSpace: widget.staffSpace,
+                        metadata: _metadata,
+                        theme: widget.theme,
+                        onNoteTap: widget.onNoteTap,
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 24),
-                ],
-              ],
+                ),
+              ),
             );
           },
         );
@@ -221,6 +341,7 @@ class _ScorePage extends StatelessWidget {
   final double height;
   final double margin;
   final double staffSpace;
+  final SmuflMetadata metadata;
   final MusicScoreTheme theme;
   final ValueChanged<Note>? onNoteTap;
 
@@ -230,6 +351,7 @@ class _ScorePage extends StatelessWidget {
     required this.height,
     required this.margin,
     required this.staffSpace,
+    required this.metadata,
     required this.theme,
     required this.onNoteTap,
   });
@@ -256,6 +378,7 @@ class _ScorePage extends StatelessWidget {
                     child: GrandStaff(
                       groups: systems[index].staffGroups,
                       staffSpace: staffSpace,
+                      metadata: metadata,
                       theme: theme,
                       onNoteTap: onNoteTap,
                     ),
