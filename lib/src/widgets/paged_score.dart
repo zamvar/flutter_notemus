@@ -446,6 +446,7 @@ class _ScoreHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final creditLines = _creditLines();
     return SizedBox(
       width: width,
       height: staffSpace * 12.0,
@@ -492,17 +493,33 @@ class _ScoreHeader extends StatelessWidget {
                 ),
               ),
             ),
-          if (score.arranger?.isNotEmpty == true)
+          if (creditLines.isNotEmpty || score.arranger?.isNotEmpty == true)
             Align(
               alignment: Alignment.topLeft,
-              child: Text(
-                'arr. ${score.arranger}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.black,
-                  fontSize: staffSpace * 1.35,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final line in creditLines)
+                    Text(
+                      line,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontSize: staffSpace * 1.25,
+                      ),
+                    ),
+                  if (score.arranger?.isNotEmpty == true)
+                    Text(
+                      'arr. ${score.arranger}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontSize: staffSpace * 1.35,
+                      ),
+                    ),
+                ],
               ),
             ),
           if (score.copyright?.isNotEmpty == true)
@@ -521,5 +538,22 @@ class _ScoreHeader extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<String> _creditLines() {
+    final raw = score.metadata['creditLines'];
+    if (raw is! Iterable) return const [];
+    final existing = {
+      score.title,
+      score.subtitle,
+      score.composer,
+      score.arranger,
+      score.copyright,
+    };
+    return [
+      for (final value in raw.whereType<String>().take(3))
+        if (value.trim().isNotEmpty && !existing.contains(value.trim()))
+          value.trim(),
+    ];
   }
 }
