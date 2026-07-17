@@ -39,7 +39,6 @@ class GrandStaffPainter extends CustomPainter {
   final SmuflMetadata metadata;
   final MusicScoreTheme theme;
   final double availableWidth;
-  final int? preferredMeasuresPerSystem;
 
   /// Baseline-to-baseline vertical distance between adjacent staves.
   final double staffGap;
@@ -48,7 +47,6 @@ class GrandStaffPainter extends CustomPainter {
   /// systems when it doesn't fit on one line; every staff breaks at the same
   /// measures so barlines line up).
   late final List<List<_StaffLayout>> _systems;
-  late final double _horizontalScale;
 
   /// Inclusive source-measure ranges used for each rendered system.
   ///
@@ -83,7 +81,6 @@ class GrandStaffPainter extends CustomPainter {
     required this.theme,
     required this.availableWidth,
     double? staffGap,
-    this.preferredMeasuresPerSystem,
   }) : assert(
          staffGroup != null || groups != null,
          'Provide either staffGroup or groups',
@@ -95,7 +92,6 @@ class GrandStaffPainter extends CustomPainter {
     _systems = [
       for (final range in _systemRanges) _layoutSystem(range.start, range.end),
     ];
-    _horizontalScale = _calculateHorizontalScale();
   }
 
   /// Lays out + aligns one system's measures (inclusive [a]..[b]) across staves.
@@ -204,14 +200,6 @@ class GrandStaffPainter extends CustomPainter {
         .fold<int>(0, (a, b) => a > b ? a : b);
     if (nMeasures == 0) return [(start: 0, end: 0)];
 
-    final preferred = preferredMeasuresPerSystem;
-    if (preferred != null && preferred > 0) {
-      return [
-        for (var start = 0; start < nMeasures; start += preferred)
-          (start: start, end: math.min(start + preferred, nMeasures) - 1),
-      ];
-    }
-
     final widths = List<double>.filled(nMeasures, 0);
     for (final staff in _allStaves) {
       final w = _measureWidths(staff);
@@ -237,21 +225,6 @@ class GrandStaffPainter extends CustomPainter {
     }
     ranges.add((start: start, end: nMeasures - 1));
     return ranges;
-  }
-
-  double _calculateHorizontalScale() {
-    if (preferredMeasuresPerSystem == null || _systems.isEmpty) return 1.0;
-    var requiredWidth = 0.0;
-    for (final system in _systems) {
-      for (final layout in system) {
-        for (final element in layout.elements) {
-          requiredWidth = math.max(requiredWidth, element.position.dx);
-        }
-      }
-    }
-    requiredWidth += staffSpace * 2.0;
-    final usableWidth = math.max(1.0, availableWidth - _bracePad);
-    return math.min(1.0, usableWidth / math.max(usableWidth, requiredWidth));
   }
 
   // --- Horizontal alignment -------------------------------------------------
@@ -353,7 +326,6 @@ class GrandStaffPainter extends CustomPainter {
 
     // Shift the whole system right to leave room for the brace/bracket.
     canvas.translate(_bracePad, 0);
-    canvas.scale(_horizontalScale, 1.0);
 
     final baseline0 = staffSpace * 5.0;
     for (var sysIdx = 0; sysIdx < _systems.length; sysIdx++) {
@@ -741,7 +713,7 @@ class GrandStaffPainter extends CustomPainter {
 
     for (var sysIdx = 0; sysIdx < _systems.length; sysIdx++) {
       final systemPosition = Offset(
-        (position.dx - _bracePad) / _horizontalScale,
+        position.dx - _bracePad,
         position.dy - sysIdx * systemBlockHeight,
       );
       if (systemPosition.dy < -hitRadius ||
@@ -797,7 +769,6 @@ class GrandStaffPainter extends CustomPainter {
   bool shouldRepaint(covariant GrandStaffPainter oldDelegate) {
     return !identical(oldDelegate.groups, groups) ||
         oldDelegate.staffSpace != staffSpace ||
-        oldDelegate.availableWidth != availableWidth ||
-        oldDelegate.preferredMeasuresPerSystem != preferredMeasuresPerSystem;
+        oldDelegate.availableWidth != availableWidth;
   }
 }

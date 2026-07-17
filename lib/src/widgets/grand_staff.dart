@@ -88,9 +88,6 @@ class GrandStaff extends StatefulWidget {
   /// Reuses metadata loaded by a parent document renderer.
   final SmuflMetadata? metadata;
 
-  /// Optional fixed measure target for a paper-style system.
-  final int? preferredMeasuresPerSystem;
-
   const GrandStaff({
     super.key,
     this.group,
@@ -100,7 +97,6 @@ class GrandStaff extends StatefulWidget {
     this.staffGap,
     this.onNoteTap,
     this.metadata,
-    this.preferredMeasuresPerSystem,
   }) : assert(
          group != null || groups != null,
          'Provide either group or groups',
@@ -167,7 +163,6 @@ class _GrandStaffState extends State<GrandStaff> {
               theme: widget.theme,
               availableWidth: width,
               staffGap: _gap,
-              preferredMeasuresPerSystem: widget.preferredMeasuresPerSystem,
             );
             final height = painter.totalHeight;
             return SizedBox(
