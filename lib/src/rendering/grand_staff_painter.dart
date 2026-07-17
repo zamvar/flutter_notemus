@@ -729,21 +729,23 @@ class GrandStaffPainter extends CustomPainter {
   ///
   /// Coordinates are in the local space of the [CustomPaint], including the
   /// brace padding and stacked-system offsets applied in [paint].
-  Note? noteAt(Offset position) {
+  Note? noteAt(Offset position, {Note? lastNote}) {
     if (_systems.isEmpty) return null;
 
     Note? closest;
     var closestDistance = double.infinity;
     final baseline0 = staffSpace * 5.0;
-    final hitRadius = staffSpace * 1.35;
+    final sequence = _noteSequence();
+    final lastIndex = lastNote == null ? -1 : sequence.indexOf(lastNote);
+    final edgeRadius = staffSpace * 8.0;
 
     for (var sysIdx = 0; sysIdx < _systems.length; sysIdx++) {
       final systemPosition = Offset(
         (position.dx - _bracePad) / _systemScales[sysIdx],
         position.dy - sysIdx * systemBlockHeight,
       );
-      if (systemPosition.dy < -hitRadius ||
-          systemPosition.dy > systemBlockHeight + hitRadius) {
+      if (systemPosition.dy < -edgeRadius ||
+          systemPosition.dy > systemBlockHeight + edgeRadius) {
         continue;
       }
 
@@ -787,6 +789,11 @@ class GrandStaffPainter extends CustomPainter {
                   centerY,
             );
             final distance = (systemPosition - noteCenter).distance;
+            final noteIndex = sequence.indexOf(note);
+            final hitRadius = _hitRadiusFor(
+              noteIndex: noteIndex,
+              lastIndex: lastIndex,
+            );
             if (distance <= hitRadius && distance < closestDistance) {
               closest = note;
               closestDistance = distance;
@@ -796,6 +803,46 @@ class GrandStaffPainter extends CustomPainter {
       }
     }
     return closest;
+  }
+
+  List<Note> _noteSequence() {
+    final notes = <Note>[];
+    final seen = Set<Note>.identity();
+    for (final system in _systems) {
+      for (final layout in system) {
+        for (final positioned in layout.elements) {
+          final element = positioned.element;
+          final candidates = switch (element) {
+            Note note => [note],
+            Chord chord => chord.notes,
+            _ => const <Note>[],
+          };
+          for (final note in candidates) {
+            if (seen.add(note)) notes.add(note);
+          }
+        }
+      }
+    }
+    return notes;
+  }
+
+  double _hitRadiusFor({required int noteIndex, required int lastIndex}) {
+    const baseRadiusStaffSpaces = 8.0;
+    const previousRadiusStaffSpaces = 4.0;
+    const distantRadiusStaffSpaces = 2.7;
+    if (lastIndex < 0 || noteIndex < 0) {
+      return staffSpace * baseRadiusStaffSpaces;
+    }
+    if (noteIndex == lastIndex) {
+      return staffSpace * previousRadiusStaffSpaces;
+    }
+    if (noteIndex >= lastIndex && noteIndex - lastIndex <= 2) {
+      return staffSpace * baseRadiusStaffSpaces;
+    }
+    if (noteIndex == lastIndex - 1) {
+      return staffSpace * previousRadiusStaffSpaces;
+    }
+    return staffSpace * distantRadiusStaffSpaces;
   }
 
   @override

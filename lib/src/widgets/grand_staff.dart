@@ -4,6 +4,10 @@
 // a [StaffGroup]: the staves are stacked vertically, aligned on a shared
 // horizontal grid, and connected by a brace/bracket and continuous barlines.
 
+import 'dart:async' as async;
+import 'dart:core';
+import 'dart:core' as core;
+
 import 'package:flutter/material.dart';
 
 import '../../core/core.dart';
@@ -123,6 +127,8 @@ class GrandStaff extends StatefulWidget {
 class _GrandStaffState extends State<GrandStaff> {
   late Future<void> _metadataFuture;
   late SmuflMetadata _metadata;
+  Note? _lastTappedNote;
+  async.Timer? _tapResetTimer;
 
   @override
   void initState() {
@@ -140,6 +146,31 @@ class _GrandStaffState extends State<GrandStaff> {
       _metadata = widget.metadata!;
       _metadataFuture = Future<void>.value();
     }
+  }
+
+  @override
+  void dispose() {
+    _tapResetTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleNoteTap(TapUpDetails details, GrandStaffPainter painter) {
+    final note = painter.noteAt(
+      details.localPosition,
+      lastNote: _lastTappedNote,
+    );
+    if (note == null) return;
+
+    _lastTappedNote = note;
+    _tapResetTimer?.cancel();
+    _tapResetTimer = async.Timer(const core.Duration(seconds: 5), () {
+      if (mounted) _lastTappedNote = null;
+    });
+
+    widget.onNoteTap?.call(note);
+    widget.onNoteTapWithPosition?.call(
+      ScoreNoteTap(note: note, globalPosition: details.globalPosition),
+    );
   }
 
   double get _gap => widget.staffGap ?? widget.staffSpace * 11.0;
@@ -186,18 +217,7 @@ class _GrandStaffState extends State<GrandStaff> {
                     widget.onNoteTap == null &&
                         widget.onNoteTapWithPosition == null
                     ? null
-                    : (details) {
-                        final note = painter.noteAt(details.localPosition);
-                        if (note != null) {
-                          widget.onNoteTap?.call(note);
-                          widget.onNoteTapWithPosition?.call(
-                            ScoreNoteTap(
-                              note: note,
-                              globalPosition: details.globalPosition,
-                            ),
-                          );
-                        }
-                      },
+                    : (details) => _handleNoteTap(details, painter),
                 child: CustomPaint(size: Size(width, height), painter: painter),
               ),
             );
