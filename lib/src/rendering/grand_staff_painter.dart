@@ -47,6 +47,7 @@ class GrandStaffPainter extends CustomPainter {
   /// systems when it doesn't fit on one line; every staff breaks at the same
   /// measures so barlines line up).
   late final List<List<_StaffLayout>> _systems;
+  late final List<double> _systemScales;
 
   /// Inclusive source-measure ranges used for each rendered system.
   ///
@@ -92,6 +93,7 @@ class GrandStaffPainter extends CustomPainter {
     _systems = [
       for (final range in _systemRanges) _layoutSystem(range.start, range.end),
     ];
+    _systemScales = _calculateSystemScales();
   }
 
   /// Lays out + aligns one system's measures (inclusive [a]..[b]) across staves.
@@ -208,14 +210,20 @@ class GrandStaffPainter extends CustomPainter {
       }
     }
 
-    final usable = (availableWidth - _bracePad) - staffSpace * 1.0;
+    final usable = math.max(1.0, (availableWidth - _bracePad) - staffSpace);
     final lead = staffSpace * 4.0; // restated clef+key allowance per new system
+    // Allow measured notation to compress when needed, but keep the minimum
+    // scale high enough that normal paper layouts remain readable. The number
+    // of measures per line therefore changes with both page width and music
+    // density instead of being fixed by the widget.
+    const minimumSystemScale = 0.55;
+    final naturalWidthBudget = usable / minimumSystemScale;
     final ranges = <({int start, int end})>[];
     var start = 0;
     var running = 0.0;
     for (var i = 0; i < nMeasures; i++) {
       final w = widths[i];
-      if (i > start && running + w > usable) {
+      if (i > start && running + w > naturalWidthBudget) {
         ranges.add((start: start, end: i - 1));
         start = i;
         running = lead + w;
@@ -225,6 +233,23 @@ class GrandStaffPainter extends CustomPainter {
     }
     ranges.add((start: start, end: nMeasures - 1));
     return ranges;
+  }
+
+  List<double> _calculateSystemScales() {
+    final usable = math.max(1.0, availableWidth - _bracePad);
+    return [
+      for (final system in _systems)
+        () {
+          var requiredWidth = 0.0;
+          for (final layout in system) {
+            for (final element in layout.elements) {
+              requiredWidth = math.max(requiredWidth, element.position.dx);
+            }
+          }
+          requiredWidth += staffSpace * 2.0;
+          return math.min(1.0, usable / math.max(usable, requiredWidth));
+        }(),
+    ];
   }
 
   // --- Horizontal alignment -------------------------------------------------
@@ -333,6 +358,7 @@ class GrandStaffPainter extends CustomPainter {
       if (layouts.isEmpty) continue;
       canvas.save();
       canvas.translate(0, sysIdx * systemBlockHeight);
+      canvas.scale(_systemScales[sysIdx], 1.0);
       _paintSystem(canvas, size, layouts, baseline0, sysIdx);
       canvas.restore();
     }
@@ -713,7 +739,7 @@ class GrandStaffPainter extends CustomPainter {
 
     for (var sysIdx = 0; sysIdx < _systems.length; sysIdx++) {
       final systemPosition = Offset(
-        position.dx - _bracePad,
+        (position.dx - _bracePad) / _systemScales[sysIdx],
         position.dy - sysIdx * systemBlockHeight,
       );
       if (systemPosition.dy < -hitRadius ||
