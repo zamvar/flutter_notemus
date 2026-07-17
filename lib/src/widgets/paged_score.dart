@@ -181,11 +181,15 @@ class _PagedScoreViewState extends State<PagedScoreView> {
   }
 
   int? _measureIndexForNumber(int number) {
+    var hasExplicitNumber = false;
     for (final staff in widget.score.allStaves) {
       for (var index = 0; index < staff.measures.length; index++) {
-        if (staff.measures[index].number == number) return index;
+        final measureNumber = staff.measures[index].number;
+        if (measureNumber != null) hasExplicitNumber = true;
+        if (measureNumber == number) return index;
       }
     }
+    if (hasExplicitNumber) return null;
     final fallback = number - 1;
     return fallback >= 0 &&
             widget.score.allStaves.isNotEmpty &&

@@ -138,6 +138,7 @@ class _GrandStaffState extends State<GrandStaff> {
   final _noteStopwatch = core.Stopwatch()..start();
   var _pointerMoved = false;
   var _lastNoteEventMs = 0;
+  _ScopedPlaybackPosition? _playheadScope;
 
   @override
   void initState() {
@@ -160,6 +161,7 @@ class _GrandStaffState extends State<GrandStaff> {
   @override
   void dispose() {
     _tapResetTimer?.cancel();
+    _playheadScope?.dispose();
     _noteStopwatch.stop();
     super.dispose();
   }
@@ -238,8 +240,23 @@ class _GrandStaffState extends State<GrandStaff> {
               theme: widget.theme,
               availableWidth: width,
               staffGap: _gap,
-              playbackPosition: widget.playbackPosition,
             );
+            final sourcePlaybackPosition = widget.playbackPosition;
+            if (sourcePlaybackPosition == null) {
+              _playheadScope?.dispose();
+              _playheadScope = null;
+            } else if (_playheadScope == null) {
+              _playheadScope = _ScopedPlaybackPosition(
+                source: sourcePlaybackPosition,
+                layout: painter,
+              );
+            } else {
+              _playheadScope!.update(
+                source: sourcePlaybackPosition,
+                layout: painter,
+              );
+            }
+            final playheadScope = _playheadScope;
             final height = painter.totalHeight;
             return SizedBox(
               width: width,
@@ -267,11 +284,11 @@ class _GrandStaffState extends State<GrandStaff> {
                   child: CustomPaint(
                     size: Size(width, height),
                     painter: painter,
-                    foregroundPainter: widget.playbackPosition == null
+                    foregroundPainter: playheadScope == null
                         ? null
                         : _ScorePlayheadPainter(
                             layout: painter,
-                            playbackPosition: widget.playbackPosition!,
+                            playbackPosition: playheadScope,
                           ),
                   ),
                 ),
@@ -292,11 +309,51 @@ class _ScorePlayheadPainter extends CustomPainter {
     : super(repaint: playbackPosition);
 
   @override
-  void paint(Canvas canvas, Size size) => layout.paintPlayhead(canvas, size);
+  void paint(Canvas canvas, Size size) =>
+      layout.paintPlayhead(canvas, size, playbackPosition.value);
 
   @override
   bool shouldRepaint(covariant _ScorePlayheadPainter oldDelegate) {
     return oldDelegate.layout != layout ||
         oldDelegate.playbackPosition != playbackPosition;
+  }
+}
+
+class _ScopedPlaybackPosition extends ValueNotifier<ScorePlaybackPosition?> {
+  ValueListenable<ScorePlaybackPosition?> _source;
+  GrandStaffPainter _layout;
+
+  _ScopedPlaybackPosition({
+    required ValueListenable<ScorePlaybackPosition?> source,
+    required GrandStaffPainter layout,
+  }) : _source = source,
+       _layout = layout,
+       super(null) {
+    _source.addListener(_sync);
+    _sync();
+  }
+
+  void update({
+    required ValueListenable<ScorePlaybackPosition?> source,
+    required GrandStaffPainter layout,
+  }) {
+    if (_source != source) {
+      _source.removeListener(_sync);
+      _source = source;
+      _source.addListener(_sync);
+    }
+    _layout = layout;
+    _sync();
+  }
+
+  void _sync() {
+    final position = _source.value;
+    value = _layout.hasPlayhead(position) ? position : null;
+  }
+
+  @override
+  void dispose() {
+    _source.removeListener(_sync);
+    super.dispose();
   }
 }

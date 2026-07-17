@@ -9,7 +9,6 @@ import 'dart:math' as math;
 // for one line, and draws each group's brace/bracket plus continuous system
 // barlines (and cross-staff beams).
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/core.dart';
@@ -86,10 +85,6 @@ class GrandStaffPainter extends CustomPainter {
   /// All staves across all groups, top to bottom.
   List<Staff> get _allStaves => [for (final g in groups) ...g.staves];
 
-  /// Optional repaint-only playback cursor. Its listener invalidates this
-  /// painter without rebuilding or relaying out the score.
-  final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
-
   /// Total painted height (all systems stacked).
   double get totalHeight =>
       _systems.length * systemBlockHeight + staffSpace * 2.0;
@@ -108,7 +103,6 @@ class GrandStaffPainter extends CustomPainter {
     required this.theme,
     required this.availableWidth,
     double? staffGap,
-    this.playbackPosition,
   }) : assert(
          staffGroup != null || groups != null,
          'Provide either staffGroup or groups',
@@ -485,14 +479,18 @@ class GrandStaffPainter extends CustomPainter {
 
   /// Paints only the playback cursor. This is intentionally separate from
   /// [paint] so clock ticks never repaint the full notation.
-  void paintPlayhead(Canvas canvas, Size size) {
+  void paintPlayhead(
+    Canvas canvas,
+    Size size,
+    ScorePlaybackPosition? position,
+  ) {
     if (metadata.isNotLoaded || _systems.isEmpty) return;
 
     canvas.save();
     canvas.translate(_bracePad, 0);
     final baseline0 = staffSpace * 5.0;
     for (var systemIndex = 0; systemIndex < _systems.length; systemIndex++) {
-      final placement = _playheadForSystem(systemIndex);
+      final placement = _playheadForSystem(systemIndex, position);
       if (placement == null) continue;
 
       final layouts = _systems[systemIndex];
@@ -516,8 +514,14 @@ class GrandStaffPainter extends CustomPainter {
     canvas.restore();
   }
 
-  _PlayheadPlacement? _playheadForSystem(int systemIndex) {
-    final position = playbackPosition?.value;
+  bool hasPlayhead(ScorePlaybackPosition? position) {
+    return _playheadForSystem(0, position) != null;
+  }
+
+  _PlayheadPlacement? _playheadForSystem(
+    int systemIndex,
+    ScorePlaybackPosition? position,
+  ) {
     if (position == null || systemIndex >= _systemRanges.length) return null;
 
     final measureIndex = _measureIndexForNumber(position.measureNumber);
@@ -544,11 +548,15 @@ class GrandStaffPainter extends CustomPainter {
 
   int? _measureIndexForNumber(int number) {
     final staves = _allStaves;
+    var hasExplicitNumber = false;
     for (final staff in staves) {
       for (var index = 0; index < staff.measures.length; index++) {
-        if (staff.measures[index].number == number) return index;
+        final measureNumber = staff.measures[index].number;
+        if (measureNumber != null) hasExplicitNumber = true;
+        if (measureNumber == number) return index;
       }
     }
+    if (hasExplicitNumber) return null;
     final fallback = number - 1;
     return fallback >= 0 &&
             staves.isNotEmpty &&
