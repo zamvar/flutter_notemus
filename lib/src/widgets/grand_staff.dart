@@ -128,7 +128,11 @@ class _GrandStaffState extends State<GrandStaff> {
   late Future<void> _metadataFuture;
   late SmuflMetadata _metadata;
   Note? _lastTappedNote;
+  Note? _lastSwipedNote;
   async.Timer? _tapResetTimer;
+  final _noteStopwatch = core.Stopwatch()..start();
+  var _pointerMoved = false;
+  var _lastNoteEventMs = 0;
 
   @override
   void initState() {
@@ -151,16 +155,11 @@ class _GrandStaffState extends State<GrandStaff> {
   @override
   void dispose() {
     _tapResetTimer?.cancel();
+    _noteStopwatch.stop();
     super.dispose();
   }
 
-  void _handleNoteTap(TapUpDetails details, GrandStaffPainter painter) {
-    final note = painter.noteAt(
-      details.localPosition,
-      lastNote: _lastTappedNote,
-    );
-    if (note == null) return;
-
+  void _emitNote(Note note, Offset globalPosition) {
     _lastTappedNote = note;
     _tapResetTimer?.cancel();
     _tapResetTimer = async.Timer(const core.Duration(seconds: 5), () {
@@ -169,8 +168,36 @@ class _GrandStaffState extends State<GrandStaff> {
 
     widget.onNoteTap?.call(note);
     widget.onNoteTapWithPosition?.call(
-      ScoreNoteTap(note: note, globalPosition: details.globalPosition),
+      ScoreNoteTap(note: note, globalPosition: globalPosition),
     );
+  }
+
+  void _handleNoteTap(TapUpDetails details, GrandStaffPainter painter) {
+    if (_pointerMoved) {
+      _pointerMoved = false;
+      _lastSwipedNote = null;
+      return;
+    }
+    final note = painter.noteAt(
+      details.localPosition,
+      lastNote: _lastTappedNote,
+    );
+    if (note == null) return;
+
+    _emitNote(note, details.globalPosition);
+  }
+
+  void _handleNoteSwipe(PointerMoveEvent event, GrandStaffPainter painter) {
+    if (event.delta.distance < 0.5) return;
+    _pointerMoved = true;
+    final now = _noteStopwatch.elapsedMilliseconds;
+    if (now - _lastNoteEventMs < 80) return;
+
+    final note = painter.noteAt(event.localPosition, lastNote: _lastTappedNote);
+    if (note == null || note == _lastSwipedNote) return;
+    _lastSwipedNote = note;
+    _lastNoteEventMs = now;
+    _emitNote(note, event.position);
   }
 
   double get _gap => widget.staffGap ?? widget.staffSpace * 11.0;
@@ -211,14 +238,31 @@ class _GrandStaffState extends State<GrandStaff> {
             return SizedBox(
               width: width,
               height: height,
-              child: GestureDetector(
+              child: Listener(
                 behavior: HitTestBehavior.opaque,
-                onTapUp:
+                onPointerDown: (_) {
+                  _pointerMoved = false;
+                  _lastSwipedNote = null;
+                },
+                onPointerMove:
                     widget.onNoteTap == null &&
                         widget.onNoteTapWithPosition == null
                     ? null
-                    : (details) => _handleNoteTap(details, painter),
-                child: CustomPaint(size: Size(width, height), painter: painter),
+                    : (event) => _handleNoteSwipe(event, painter),
+                onPointerUp: (_) => _lastSwipedNote = null,
+                onPointerCancel: (_) => _lastSwipedNote = null,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp:
+                      widget.onNoteTap == null &&
+                          widget.onNoteTapWithPosition == null
+                      ? null
+                      : (details) => _handleNoteTap(details, painter),
+                  child: CustomPaint(
+                    size: Size(width, height),
+                    painter: painter,
+                  ),
+                ),
               ),
             );
           },

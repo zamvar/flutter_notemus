@@ -737,7 +737,7 @@ class GrandStaffPainter extends CustomPainter {
     final baseline0 = staffSpace * 5.0;
     final sequence = _noteSequence();
     final lastIndex = lastNote == null ? -1 : sequence.indexOf(lastNote);
-    final edgeRadius = staffSpace * 8.0;
+    const edgeRadius = 60.0;
 
     for (var sysIdx = 0; sysIdx < _systems.length; sysIdx++) {
       final systemPosition = Offset(
@@ -827,22 +827,24 @@ class GrandStaffPainter extends CustomPainter {
   }
 
   double _hitRadiusFor({required int noteIndex, required int lastIndex}) {
-    const baseRadiusStaffSpaces = 8.0;
-    const previousRadiusStaffSpaces = 4.0;
-    const distantRadiusStaffSpaces = 2.7;
+    // Keep the XML target sizes aligned with the PDF play overlay:
+    // 60px initial/next-two, 30px immediate previous/repeat, 20px distant.
+    const baseRadius = 60.0;
+    const previousRadius = 30.0;
+    const distantRadius = 20.0;
     if (lastIndex < 0 || noteIndex < 0) {
-      return staffSpace * baseRadiusStaffSpaces;
+      return baseRadius;
     }
     if (noteIndex == lastIndex) {
-      return staffSpace * previousRadiusStaffSpaces;
+      return previousRadius;
     }
     if (noteIndex >= lastIndex && noteIndex - lastIndex <= 2) {
-      return staffSpace * baseRadiusStaffSpaces;
+      return baseRadius;
     }
     if (noteIndex == lastIndex - 1) {
-      return staffSpace * previousRadiusStaffSpaces;
+      return previousRadius;
     }
-    return staffSpace * distantRadiusStaffSpaces;
+    return distantRadius;
   }
 
   @override
