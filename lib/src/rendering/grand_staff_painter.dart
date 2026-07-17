@@ -83,7 +83,9 @@ class GrandStaffPainter extends CustomPainter {
   late final double _bracePad;
 
   /// All staves across all groups, top to bottom.
-  List<Staff> get _allStaves => [for (final g in groups) ...g.staves];
+  late final List<Staff> _allStaves;
+  late final Map<int, int> _measureIndicesByNumber;
+  late final bool _hasExplicitMeasureNumbers;
 
   /// Total painted height (all systems stacked).
   double get totalHeight =>
@@ -109,6 +111,19 @@ class GrandStaffPainter extends CustomPainter {
        ),
        groups = groups ?? [staffGroup!],
        staffGap = staffGap ?? staffSpace * 11.0 {
+    _allStaves = [for (final g in this.groups) ...g.staves];
+    final measureIndicesByNumber = <int, int>{};
+    var hasExplicitMeasureNumbers = false;
+    for (final staff in _allStaves) {
+      for (var index = 0; index < staff.measures.length; index++) {
+        final number = staff.measures[index].number;
+        if (number == null) continue;
+        hasExplicitMeasureNumbers = true;
+        measureIndicesByNumber.putIfAbsent(number, () => index);
+      }
+    }
+    _measureIndicesByNumber = measureIndicesByNumber;
+    _hasExplicitMeasureNumbers = hasExplicitMeasureNumbers;
     _bracePad = _calculateBracePad();
     _systemRanges = _computeSystemRanges();
     _systems = [
@@ -515,7 +530,12 @@ class GrandStaffPainter extends CustomPainter {
   }
 
   bool hasPlayhead(ScorePlaybackPosition? position) {
-    return _playheadForSystem(0, position) != null;
+    if (position == null) return false;
+    final measureIndex = _measureIndexForNumber(position.measureNumber);
+    if (measureIndex == null) return false;
+    return _systemRanges.any(
+      (range) => measureIndex >= range.start && measureIndex <= range.end,
+    );
   }
 
   _PlayheadPlacement? _playheadForSystem(
@@ -547,20 +567,13 @@ class GrandStaffPainter extends CustomPainter {
   }
 
   int? _measureIndexForNumber(int number) {
-    final staves = _allStaves;
-    var hasExplicitNumber = false;
-    for (final staff in staves) {
-      for (var index = 0; index < staff.measures.length; index++) {
-        final measureNumber = staff.measures[index].number;
-        if (measureNumber != null) hasExplicitNumber = true;
-        if (measureNumber == number) return index;
-      }
-    }
-    if (hasExplicitNumber) return null;
+    final explicitIndex = _measureIndicesByNumber[number];
+    if (explicitIndex != null) return explicitIndex;
+    if (_hasExplicitMeasureNumbers) return null;
     final fallback = number - 1;
     return fallback >= 0 &&
-            staves.isNotEmpty &&
-            fallback < staves.first.measures.length
+            _allStaves.isNotEmpty &&
+            fallback < _allStaves.first.measures.length
         ? fallback
         : null;
   }

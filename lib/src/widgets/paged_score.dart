@@ -127,6 +127,7 @@ class _PagedScoreViewState extends State<PagedScoreView> {
   var _ownsController = false;
   List<({int start, int end})> _playbackSystemRanges = const [];
   int _playbackSystemsPerPage = 1;
+  int? _lastPlaybackMeasureNumber;
 
   @override
   void initState() {
@@ -161,7 +162,15 @@ class _PagedScoreViewState extends State<PagedScoreView> {
 
   void _handlePlaybackPosition() {
     final position = widget.playbackPosition?.value;
-    if (position == null || _playbackSystemRanges.isEmpty) return;
+    if (position == null) {
+      _lastPlaybackMeasureNumber = null;
+      return;
+    }
+    if (position.measureNumber == _lastPlaybackMeasureNumber ||
+        _playbackSystemRanges.isEmpty) {
+      return;
+    }
+    _lastPlaybackMeasureNumber = position.measureNumber;
 
     final measureIndex = _measureIndexForNumber(position.measureNumber);
     if (measureIndex == null) return;
