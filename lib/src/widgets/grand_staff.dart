@@ -22,12 +22,14 @@ class ScoreView extends StatelessWidget {
   final Score score;
   final MusicScoreTheme theme;
   final double staffSpace;
+  final ValueChanged<Note>? onNoteTap;
 
   const ScoreView({
     super.key,
     required this.score,
     this.theme = const MusicScoreTheme(),
     this.staffSpace = 12.0,
+    this.onNoteTap,
   });
 
   @override
@@ -35,7 +37,12 @@ class ScoreView extends StatelessWidget {
     final groups = score.staffGroups;
     if (groups.isEmpty) return const SizedBox.shrink();
     // All groups on one unified horizontal grid (a true multi-section system).
-    return GrandStaff(groups: groups, theme: theme, staffSpace: staffSpace);
+    return GrandStaff(
+      groups: groups,
+      theme: theme,
+      staffSpace: staffSpace,
+      onNoteTap: onNoteTap,
+    );
   }
 }
 
@@ -71,6 +78,13 @@ class GrandStaff extends StatefulWidget {
   /// to 11 staff spaces (a comfortable grand-staff gap).
   final double? staffGap;
 
+  /// Called when the user taps the notehead of a rendered note.
+  ///
+  /// The callback receives the original [Note] from the parsed score, so
+  /// callers can use its pitch, lyric, voice, and other musical data without
+  /// maintaining a second visual layout.
+  final ValueChanged<Note>? onNoteTap;
+
   const GrandStaff({
     super.key,
     this.group,
@@ -78,6 +92,7 @@ class GrandStaff extends StatefulWidget {
     this.theme = const MusicScoreTheme(),
     this.staffSpace = 12.0,
     this.staffGap,
+    this.onNoteTap,
   }) : assert(group != null || groups != null,
             'Provide either group or groups');
 
@@ -133,9 +148,18 @@ class _GrandStaffState extends State<GrandStaff> {
             return SizedBox(
               width: width,
               height: height,
-              child: CustomPaint(
-                size: Size(width, height),
-                painter: painter,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapUp: widget.onNoteTap == null
+                    ? null
+                    : (details) {
+                        final note = painter.noteAt(details.localPosition);
+                        if (note != null) widget.onNoteTap!(note);
+                      },
+                child: CustomPaint(
+                  size: Size(width, height),
+                  painter: painter,
+                ),
               ),
             );
           },

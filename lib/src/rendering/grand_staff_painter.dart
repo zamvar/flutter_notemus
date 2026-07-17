@@ -592,6 +592,75 @@ class GrandStaffPainter extends CustomPainter {
     }
   }
 
+  /// Returns the rendered note closest to [position], if the tap falls within
+  /// a forgiving notehead-sized target.
+  ///
+  /// Coordinates are in the local space of the [CustomPaint], including the
+  /// brace padding and stacked-system offsets applied in [paint].
+  Note? noteAt(Offset position) {
+    if (_systems.isEmpty) return null;
+
+    Note? closest;
+    var closestDistance = double.infinity;
+    final baseline0 = staffSpace * 5.0;
+    final hitRadius = staffSpace * 1.35;
+
+    for (var sysIdx = 0; sysIdx < _systems.length; sysIdx++) {
+      final systemPosition = Offset(
+        position.dx - _bracePad,
+        position.dy - sysIdx * systemBlockHeight,
+      );
+      if (systemPosition.dy < -hitRadius ||
+          systemPosition.dy > systemBlockHeight + hitRadius) {
+        continue;
+      }
+
+      final layouts = _systems[sysIdx];
+      for (var staffIdx = 0; staffIdx < layouts.length; staffIdx++) {
+        var clef = Clef(clefType: ClefType.treble);
+        for (final positioned in layouts[staffIdx].elements) {
+          final element = positioned.element;
+          if (element is Clef) {
+            clef = element;
+            continue;
+          }
+          if (element is! Note) continue;
+
+          final targetStaff = (staffIdx + element.crossStaffMove)
+              .clamp(0, _allStaves.length - 1)
+              .toInt();
+          final targetClef = targetStaff == staffIdx
+              ? clef
+              : _clefOf(targetStaff);
+          final staffStep = StaffPositionCalculator.calculate(
+            element.pitch,
+            targetClef,
+          );
+          final noteHead = metadata.getGlyphInfo(
+            element.duration.type.glyphName,
+          );
+          final centerX =
+              (noteHead?.boundingBox?.centerX ?? 0.59) * staffSpace;
+          final centerY =
+              (noteHead?.boundingBox?.centerY ?? 0.0) * staffSpace;
+          final noteCenter = Offset(
+            positioned.position.dx + centerX,
+            baseline0 +
+                targetStaff * staffGap -
+                staffStep * staffSpace * 0.5 +
+                centerY,
+          );
+          final distance = (systemPosition - noteCenter).distance;
+          if (distance <= hitRadius && distance < closestDistance) {
+            closest = element;
+            closestDistance = distance;
+          }
+        }
+      }
+    }
+    return closest;
+  }
+
   @override
   bool shouldRepaint(covariant GrandStaffPainter oldDelegate) {
     return !identical(oldDelegate.groups, groups) ||
