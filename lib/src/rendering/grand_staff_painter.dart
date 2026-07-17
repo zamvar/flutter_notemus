@@ -114,8 +114,7 @@ class GrandStaffPainter extends CustomPainter {
          'Provide either staffGroup or groups',
        ),
        groups = groups ?? [staffGroup!],
-       staffGap = staffGap ?? staffSpace * 11.0,
-       super(repaint: playbackPosition) {
+       staffGap = staffGap ?? staffSpace * 11.0 {
     _bracePad = _calculateBracePad();
     _systemRanges = _computeSystemRanges();
     _systems = [
@@ -387,14 +386,7 @@ class GrandStaffPainter extends CustomPainter {
       canvas.save();
       canvas.translate(0, sysIdx * systemBlockHeight);
       canvas.scale(_systemScales[sysIdx], 1.0);
-      _paintSystem(
-        canvas,
-        size,
-        layouts,
-        baseline0,
-        sysIdx,
-        playheadX: _playheadForSystem(sysIdx)?.x,
-      );
+      _paintSystem(canvas, size, layouts, baseline0, sysIdx);
       canvas.restore();
     }
   }
@@ -404,9 +396,8 @@ class GrandStaffPainter extends CustomPainter {
     Size size,
     List<_StaffLayout> layouts,
     double baseline0,
-    int systemIndex, {
-    double? playheadX,
-  }) {
+    int systemIndex,
+  ) {
     // Notes drawn by the cross-staff beam pass (skipped by their home staff).
     final skipPerStaff = [
       for (var i = 0; i < layouts.length; i++) _crossStaffNotesOf(layouts, i),
@@ -490,17 +481,39 @@ class GrandStaffPainter extends CustomPainter {
             staffSpace;
       canvas.drawLine(Offset(leftX, topY), Offset(leftX, bottomY), paint);
     }
+  }
 
-    if (playheadX != null) {
+  /// Paints only the playback cursor. This is intentionally separate from
+  /// [paint] so clock ticks never repaint the full notation.
+  void paintPlayhead(Canvas canvas, Size size) {
+    if (metadata.isNotLoaded || _systems.isEmpty) return;
+
+    canvas.save();
+    canvas.translate(_bracePad, 0);
+    final baseline0 = staffSpace * 5.0;
+    for (var systemIndex = 0; systemIndex < _systems.length; systemIndex++) {
+      final placement = _playheadForSystem(systemIndex);
+      if (placement == null) continue;
+
+      final layouts = _systems[systemIndex];
+      if (layouts.isEmpty) continue;
+      canvas.save();
+      canvas.translate(0, systemIndex * systemBlockHeight);
+      canvas.scale(_systemScales[systemIndex], 1.0);
+      final topY = baseline0 - staffSpace * 2;
+      final bottomY =
+          (layouts.length - 1) * staffGap + baseline0 + staffSpace * 2;
       final playheadPaint = Paint()
         ..color = theme.noteheadColor.withValues(alpha: 0.65)
         ..strokeWidth = math.max(1.0, staffSpace * 0.35);
       canvas.drawLine(
-        Offset(playheadX, topY - staffSpace),
-        Offset(playheadX, bottomY + staffSpace),
+        Offset(placement.x, topY - staffSpace),
+        Offset(placement.x, bottomY + staffSpace),
         playheadPaint,
       );
+      canvas.restore();
     }
+    canvas.restore();
   }
 
   _PlayheadPlacement? _playheadForSystem(int systemIndex) {

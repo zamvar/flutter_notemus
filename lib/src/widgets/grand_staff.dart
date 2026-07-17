@@ -267,6 +267,12 @@ class _GrandStaffState extends State<GrandStaff> {
                   child: CustomPaint(
                     size: Size(width, height),
                     painter: painter,
+                    foregroundPainter: widget.playbackPosition == null
+                        ? null
+                        : _ScorePlayheadPainter(
+                            layout: painter,
+                            playbackPosition: widget.playbackPosition!,
+                          ),
                   ),
                 ),
               ),
@@ -275,5 +281,22 @@ class _GrandStaffState extends State<GrandStaff> {
         );
       },
     );
+  }
+}
+
+class _ScorePlayheadPainter extends CustomPainter {
+  final GrandStaffPainter layout;
+  final ValueListenable<ScorePlaybackPosition?> playbackPosition;
+
+  _ScorePlayheadPainter({required this.layout, required this.playbackPosition})
+    : super(repaint: playbackPosition);
+
+  @override
+  void paint(Canvas canvas, Size size) => layout.paintPlayhead(canvas, size);
+
+  @override
+  bool shouldRepaint(covariant _ScorePlayheadPainter oldDelegate) {
+    return oldDelegate.layout != layout ||
+        oldDelegate.playbackPosition != playbackPosition;
   }
 }
