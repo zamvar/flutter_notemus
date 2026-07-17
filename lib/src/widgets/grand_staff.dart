@@ -11,6 +11,14 @@ import '../rendering/grand_staff_painter.dart';
 import '../smufl/smufl_metadata_loader.dart';
 import '../theme/music_score_theme.dart';
 
+/// A note tap plus its screen position, used for contextual note feedback.
+class ScoreNoteTap {
+  final Note note;
+  final Offset globalPosition;
+
+  const ScoreNoteTap({required this.note, required this.globalPosition});
+}
+
 /// Renders a whole [Score] — each of its [StaffGroup]s as a [GrandStaff],
 /// stacked vertically. A single-group score (piano, SATB) renders as one
 /// grand staff; a multi-group score (e.g. choir + piano) stacks the groups.
@@ -88,6 +96,9 @@ class GrandStaff extends StatefulWidget {
   /// Reuses metadata loaded by a parent document renderer.
   final SmuflMetadata? metadata;
 
+  /// Called with the tapped note and its global screen position.
+  final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
+
   const GrandStaff({
     super.key,
     this.group,
@@ -97,6 +108,7 @@ class GrandStaff extends StatefulWidget {
     this.staffGap,
     this.onNoteTap,
     this.metadata,
+    this.onNoteTapWithPosition,
   }) : assert(
          group != null || groups != null,
          'Provide either group or groups',
@@ -170,11 +182,21 @@ class _GrandStaffState extends State<GrandStaff> {
               height: height,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTapUp: widget.onNoteTap == null
+                onTapUp:
+                    widget.onNoteTap == null &&
+                        widget.onNoteTapWithPosition == null
                     ? null
                     : (details) {
                         final note = painter.noteAt(details.localPosition);
-                        if (note != null) widget.onNoteTap!(note);
+                        if (note != null) {
+                          widget.onNoteTap?.call(note);
+                          widget.onNoteTapWithPosition?.call(
+                            ScoreNoteTap(
+                              note: note,
+                              globalPosition: details.globalPosition,
+                            ),
+                          );
+                        }
                       },
                 child: CustomPaint(size: Size(width, height), painter: painter),
               ),

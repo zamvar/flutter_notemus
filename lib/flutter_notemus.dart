@@ -70,7 +70,7 @@ export 'src/rendering/gregorian/chant_score.dart';
 export 'src/rendering/gregorian/chant_playback.dart';
 export 'src/rendering/gregorian/gabc_parser.dart' show GabcParser, GabcResult;
 export 'src/layout/collision_detector.dart';
-export 'src/widgets/grand_staff.dart' show GrandStaff, ScoreView;
+export 'src/widgets/grand_staff.dart' show GrandStaff, ScoreView, ScoreNoteTap;
 export 'src/widgets/paged_score.dart' show PagedScoreController, PagedScoreView;
 
 /// The main Flutter widget for rendering music notetion.

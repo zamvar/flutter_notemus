@@ -88,6 +88,7 @@ class PagedScoreView extends StatefulWidget {
   final MusicScoreTheme theme;
   final double staffSpace;
   final ValueChanged<Note>? onNoteTap;
+  final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
   final PagedScoreController? controller;
 
   /// Page size in points. A4 portrait is the default.
@@ -103,6 +104,7 @@ class PagedScoreView extends StatefulWidget {
     this.theme = const MusicScoreTheme(),
     this.staffSpace = 12.0,
     this.onNoteTap,
+    this.onNoteTapWithPosition,
     this.controller,
     this.pageWidth = 595.0,
     this.pageHeight = 842.0,
@@ -214,6 +216,7 @@ class _PagedScoreViewState extends State<PagedScoreView> {
                         metadata: _metadata,
                         theme: widget.theme,
                         onNoteTap: widget.onNoteTap,
+                        onNoteTapWithPosition: widget.onNoteTapWithPosition,
                       ),
                     ),
                   ),
@@ -363,6 +366,7 @@ class _ScorePage extends StatelessWidget {
   final SmuflMetadata metadata;
   final MusicScoreTheme theme;
   final ValueChanged<Note>? onNoteTap;
+  final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
 
   const _ScorePage({
     required this.systems,
@@ -373,6 +377,7 @@ class _ScorePage extends StatelessWidget {
     required this.metadata,
     required this.theme,
     required this.onNoteTap,
+    required this.onNoteTapWithPosition,
   });
 
   @override
@@ -410,6 +415,7 @@ class _ScorePage extends StatelessWidget {
                       metadata: metadata,
                       theme: theme,
                       onNoteTap: onNoteTap,
+                      onNoteTapWithPosition: onNoteTapWithPosition,
                     ),
                   ),
                   if (index < systems.length - 1) SizedBox(height: systemGap),

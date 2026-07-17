@@ -756,34 +756,41 @@ class GrandStaffPainter extends CustomPainter {
             clef = element;
             continue;
           }
-          if (element is! Note) continue;
-
-          final targetStaff = (staffIdx + element.crossStaffMove)
-              .clamp(0, _allStaves.length - 1)
-              .toInt();
-          final targetClef = targetStaff == staffIdx
-              ? clef
-              : _clefOf(targetStaff);
-          final staffStep = StaffPositionCalculator.calculate(
-            element.pitch,
-            targetClef,
-          );
-          final noteHead = metadata.getGlyphInfo(
-            element.duration.type.glyphName,
-          );
-          final centerX = (noteHead?.boundingBox?.centerX ?? 0.59) * staffSpace;
-          final centerY = (noteHead?.boundingBox?.centerY ?? 0.0) * staffSpace;
-          final noteCenter = Offset(
-            positioned.position.dx + centerX,
-            baseline0 +
-                targetStaff * staffGap -
-                staffStep * staffSpace * 0.5 +
-                centerY,
-          );
-          final distance = (systemPosition - noteCenter).distance;
-          if (distance <= hitRadius && distance < closestDistance) {
-            closest = element;
-            closestDistance = distance;
+          final notes = switch (element) {
+            Note note => [note],
+            Chord chord => chord.notes,
+            _ => const <Note>[],
+          };
+          for (final note in notes) {
+            final targetStaff = (staffIdx + note.crossStaffMove)
+                .clamp(0, _allStaves.length - 1)
+                .toInt();
+            final targetClef = targetStaff == staffIdx
+                ? clef
+                : _clefOf(targetStaff);
+            final staffStep = StaffPositionCalculator.calculate(
+              note.pitch,
+              targetClef,
+            );
+            final noteHead = metadata.getGlyphInfo(
+              note.duration.type.glyphName,
+            );
+            final centerX =
+                (noteHead?.boundingBox?.centerX ?? 0.59) * staffSpace;
+            final centerY =
+                (noteHead?.boundingBox?.centerY ?? 0.0) * staffSpace;
+            final noteCenter = Offset(
+              positioned.position.dx + centerX,
+              baseline0 +
+                  targetStaff * staffGap -
+                  staffStep * staffSpace * 0.5 +
+                  centerY,
+            );
+            final distance = (systemPosition - noteCenter).distance;
+            if (distance <= hitRadius && distance < closestDistance) {
+              closest = note;
+              closestDistance = distance;
+            }
           }
         }
       }
