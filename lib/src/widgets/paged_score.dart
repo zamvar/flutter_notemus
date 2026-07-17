@@ -89,6 +89,7 @@ class PagedScoreView extends StatefulWidget {
   final double staffSpace;
   final ValueChanged<Note>? onNoteTap;
   final PagedScoreController? controller;
+  final int measuresPerSystem;
 
   /// Page size in points. A4 portrait is the default.
   final double pageWidth;
@@ -104,10 +105,12 @@ class PagedScoreView extends StatefulWidget {
     this.staffSpace = 12.0,
     this.onNoteTap,
     this.controller,
+    this.measuresPerSystem = 6,
     this.pageWidth = 595.0,
     this.pageHeight = 842.0,
     this.pageMargin = 40.0,
   }) : assert(pageWidth > 0),
+       assert(measuresPerSystem > 0),
        assert(pageHeight > 0),
        assert(pageMargin >= 0);
 
@@ -211,6 +214,7 @@ class _PagedScoreViewState extends State<PagedScoreView> {
                         height: height,
                         margin: margin,
                         staffSpace: widget.staffSpace,
+                        measuresPerSystem: widget.measuresPerSystem,
                         metadata: _metadata,
                         theme: widget.theme,
                         onNoteTap: widget.onNoteTap,
@@ -236,6 +240,7 @@ class _PagedScoreViewState extends State<PagedScoreView> {
       theme: widget.theme,
       availableWidth: math.max(1.0, contentWidth),
       staffGap: widget.staffSpace * 11.0,
+      preferredMeasuresPerSystem: widget.measuresPerSystem,
     );
     final ranges = probe.systemRanges;
     if (ranges.isEmpty) return const [];
@@ -360,6 +365,7 @@ class _ScorePage extends StatelessWidget {
   final double height;
   final double margin;
   final double staffSpace;
+  final int measuresPerSystem;
   final SmuflMetadata metadata;
   final MusicScoreTheme theme;
   final ValueChanged<Note>? onNoteTap;
@@ -370,6 +376,7 @@ class _ScorePage extends StatelessWidget {
     required this.height,
     required this.margin,
     required this.staffSpace,
+    required this.measuresPerSystem,
     required this.metadata,
     required this.theme,
     required this.onNoteTap,
@@ -407,6 +414,7 @@ class _ScorePage extends StatelessWidget {
                     child: GrandStaff(
                       groups: systems[index].staffGroups,
                       staffSpace: staffSpace,
+                      preferredMeasuresPerSystem: measuresPerSystem,
                       metadata: metadata,
                       theme: theme,
                       onNoteTap: onNoteTap,
