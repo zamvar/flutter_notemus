@@ -60,6 +60,7 @@ export 'src/smufl/smufl_metadata_loader.dart';
 export 'src/rendering/staff_position_calculator.dart';
 export 'src/rendering/staff_coordinate_system.dart';
 export 'src/rendering/staff_renderer.dart';
+export 'src/rendering/grand_staff_painter.dart' show ScorePlaybackPosition;
 export 'src/rendering/renderers/base_glyph_renderer.dart';
 export 'src/rendering/jianpu/jianpu_pitch_mapper.dart';
 export 'src/rendering/jianpu/jianpu_renderer.dart' show JianpuTheme;

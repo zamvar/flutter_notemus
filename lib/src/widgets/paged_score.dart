@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/core.dart';
@@ -90,6 +91,7 @@ class PagedScoreView extends StatefulWidget {
   final ValueChanged<Note>? onNoteTap;
   final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
   final PagedScoreController? controller;
+  final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
 
   /// Page size in points. A4 portrait is the default.
   final double pageWidth;
@@ -106,6 +108,7 @@ class PagedScoreView extends StatefulWidget {
     this.onNoteTap,
     this.onNoteTapWithPosition,
     this.controller,
+    this.playbackPosition,
     this.pageWidth = 595.0,
     this.pageHeight = 842.0,
     this.pageMargin = 40.0,
@@ -122,6 +125,8 @@ class _PagedScoreViewState extends State<PagedScoreView> {
   late final Future<void> _metadataFuture;
   late PagedScoreController _controller;
   var _ownsController = false;
+  List<({int start, int end})> _playbackSystemRanges = const [];
+  int _playbackSystemsPerPage = 1;
 
   @override
   void initState() {
@@ -130,6 +135,7 @@ class _PagedScoreViewState extends State<PagedScoreView> {
     _metadataFuture = _metadata.load();
     _controller = widget.controller ?? PagedScoreController();
     _ownsController = widget.controller == null;
+    widget.playbackPosition?.addListener(_handlePlaybackPosition);
   }
 
   @override
@@ -140,12 +146,52 @@ class _PagedScoreViewState extends State<PagedScoreView> {
       _controller = widget.controller ?? PagedScoreController();
       _ownsController = widget.controller == null;
     }
+    if (oldWidget.playbackPosition != widget.playbackPosition) {
+      oldWidget.playbackPosition?.removeListener(_handlePlaybackPosition);
+      widget.playbackPosition?.addListener(_handlePlaybackPosition);
+    }
   }
 
   @override
   void dispose() {
+    widget.playbackPosition?.removeListener(_handlePlaybackPosition);
     if (_ownsController) _controller.dispose();
     super.dispose();
+  }
+
+  void _handlePlaybackPosition() {
+    final position = widget.playbackPosition?.value;
+    if (position == null || _playbackSystemRanges.isEmpty) return;
+
+    final measureIndex = _measureIndexForNumber(position.measureNumber);
+    if (measureIndex == null) return;
+    final systemIndex = _playbackSystemRanges.indexWhere(
+      (range) => measureIndex >= range.start && measureIndex <= range.end,
+    );
+    if (systemIndex < 0) return;
+
+    final page = systemIndex ~/ _playbackSystemsPerPage;
+    if (page == _controller.currentPage || page >= _controller.pageCount) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || page >= _controller.pageCount) return;
+      _controller.pageController.jumpToPage(page);
+    });
+  }
+
+  int? _measureIndexForNumber(int number) {
+    for (final staff in widget.score.allStaves) {
+      for (var index = 0; index < staff.measures.length; index++) {
+        if (staff.measures[index].number == number) return index;
+      }
+    }
+    final fallback = number - 1;
+    return fallback >= 0 &&
+            widget.score.allStaves.isNotEmpty &&
+            fallback < widget.score.allStaves.first.measures.length
+        ? fallback
+        : null;
   }
 
   @override
@@ -174,8 +220,12 @@ class _PagedScoreViewState extends State<PagedScoreView> {
 
             final height = width * widget.pageHeight / widget.pageWidth;
             final margin = widget.pageMargin * width / widget.pageWidth;
-            final systems = _systems(width - margin * 2.0);
-            final pages = _pages(systems, _systemsPerPage());
+            final systemRanges = _systemRanges(width - margin * 2.0);
+            final systems = _systems(systemRanges);
+            final systemsPerPage = _systemsPerPage();
+            _playbackSystemRanges = systemRanges;
+            _playbackSystemsPerPage = systemsPerPage;
+            final pages = _pages(systems, systemsPerPage);
             if (_controller.pageCount != pages.length) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted) _controller.setPageCount(pages.length);
@@ -217,6 +267,7 @@ class _PagedScoreViewState extends State<PagedScoreView> {
                         theme: widget.theme,
                         onNoteTap: widget.onNoteTap,
                         onNoteTapWithPosition: widget.onNoteTapWithPosition,
+                        playbackPosition: widget.playbackPosition,
                       ),
                     ),
                   ),
@@ -231,7 +282,7 @@ class _PagedScoreViewState extends State<PagedScoreView> {
 
   /// Uses the same greedy system ranges as [GrandStaffPainter], ensuring that
   /// pagination follows the actual engraving layout at this page width.
-  List<Score> _systems(double contentWidth) {
+  List<({int start, int end})> _systemRanges(double contentWidth) {
     final probe = GrandStaffPainter(
       groups: widget.score.staffGroups,
       staffSpace: widget.staffSpace,
@@ -240,9 +291,11 @@ class _PagedScoreViewState extends State<PagedScoreView> {
       availableWidth: math.max(1.0, contentWidth),
       staffGap: widget.staffSpace * 11.0,
     );
-    final ranges = probe.systemRanges;
-    if (ranges.isEmpty) return const [];
+    return probe.systemRanges;
+  }
 
+  List<Score> _systems(List<({int start, int end})> ranges) {
+    if (ranges.isEmpty) return const [];
     return [for (final range in ranges) _sliceScore(range.start, range.end)];
   }
 
@@ -369,6 +422,7 @@ class _ScorePage extends StatelessWidget {
   final MusicScoreTheme theme;
   final ValueChanged<Note>? onNoteTap;
   final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
+  final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
 
   const _ScorePage({
     required this.systems,
@@ -380,6 +434,7 @@ class _ScorePage extends StatelessWidget {
     required this.theme,
     required this.onNoteTap,
     required this.onNoteTapWithPosition,
+    required this.playbackPosition,
   });
 
   @override
@@ -420,6 +475,7 @@ class _ScorePage extends StatelessWidget {
                       theme: theme,
                       onNoteTap: onNoteTap,
                       onNoteTapWithPosition: onNoteTapWithPosition,
+                      playbackPosition: playbackPosition,
                     ),
                   ),
                   if (index < systems.length - 1) SizedBox(height: systemGap),

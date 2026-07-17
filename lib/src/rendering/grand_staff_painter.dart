@@ -9,6 +9,7 @@ import 'dart:math' as math;
 // for one line, and draws each group's brace/bracket plus continuous system
 // barlines (and cross-staff beams).
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/core.dart';
@@ -25,6 +26,27 @@ class _StaffLayout {
   final List<PositionedElement> elements;
   final LayoutEngine engine;
   _StaffLayout(this.elements, this.engine);
+}
+
+/// Musical position used by the rendered score playhead.
+class ScorePlaybackPosition {
+  /// MusicXML measure number, normally starting at 1.
+  final int measureNumber;
+
+  /// One-based beat within the measure.
+  final double beat;
+
+  const ScorePlaybackPosition({
+    required this.measureNumber,
+    required this.beat,
+  });
+}
+
+class _PlayheadPlacement {
+  final int systemIndex;
+  final double x;
+
+  const _PlayheadPlacement({required this.systemIndex, required this.x});
 }
 
 /// Renders one or more [StaffGroup]s as a unified, vertically-stacked,
@@ -64,6 +86,10 @@ class GrandStaffPainter extends CustomPainter {
   /// All staves across all groups, top to bottom.
   List<Staff> get _allStaves => [for (final g in groups) ...g.staves];
 
+  /// Optional repaint-only playback cursor. Its listener invalidates this
+  /// painter without rebuilding or relaying out the score.
+  final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
+
   /// Total painted height (all systems stacked).
   double get totalHeight =>
       _systems.length * systemBlockHeight + staffSpace * 2.0;
@@ -82,12 +108,14 @@ class GrandStaffPainter extends CustomPainter {
     required this.theme,
     required this.availableWidth,
     double? staffGap,
+    this.playbackPosition,
   }) : assert(
          staffGroup != null || groups != null,
          'Provide either staffGroup or groups',
        ),
        groups = groups ?? [staffGroup!],
-       staffGap = staffGap ?? staffSpace * 11.0 {
+       staffGap = staffGap ?? staffSpace * 11.0,
+       super(repaint: playbackPosition) {
     _bracePad = _calculateBracePad();
     _systemRanges = _computeSystemRanges();
     _systems = [
@@ -359,7 +387,14 @@ class GrandStaffPainter extends CustomPainter {
       canvas.save();
       canvas.translate(0, sysIdx * systemBlockHeight);
       canvas.scale(_systemScales[sysIdx], 1.0);
-      _paintSystem(canvas, size, layouts, baseline0, sysIdx);
+      _paintSystem(
+        canvas,
+        size,
+        layouts,
+        baseline0,
+        sysIdx,
+        playheadX: _playheadForSystem(sysIdx)?.x,
+      );
       canvas.restore();
     }
   }
@@ -369,8 +404,9 @@ class GrandStaffPainter extends CustomPainter {
     Size size,
     List<_StaffLayout> layouts,
     double baseline0,
-    int systemIndex,
-  ) {
+    int systemIndex, {
+    double? playheadX,
+  }) {
     // Notes drawn by the cross-staff beam pass (skipped by their home staff).
     final skipPerStaff = [
       for (var i = 0; i < layouts.length; i++) _crossStaffNotesOf(layouts, i),
@@ -454,6 +490,58 @@ class GrandStaffPainter extends CustomPainter {
             staffSpace;
       canvas.drawLine(Offset(leftX, topY), Offset(leftX, bottomY), paint);
     }
+
+    if (playheadX != null) {
+      final playheadPaint = Paint()
+        ..color = theme.noteheadColor.withValues(alpha: 0.65)
+        ..strokeWidth = math.max(1.0, staffSpace * 0.35);
+      canvas.drawLine(
+        Offset(playheadX, topY - staffSpace),
+        Offset(playheadX, bottomY + staffSpace),
+        playheadPaint,
+      );
+    }
+  }
+
+  _PlayheadPlacement? _playheadForSystem(int systemIndex) {
+    final position = playbackPosition?.value;
+    if (position == null || systemIndex >= _systemRanges.length) return null;
+
+    final measureIndex = _measureIndexForNumber(position.measureNumber);
+    if (measureIndex == null) return null;
+    final range = _systemRanges[systemIndex];
+    if (measureIndex < range.start || measureIndex > range.end) return null;
+
+    final layouts = _systems[systemIndex];
+    if (layouts.isEmpty) return null;
+    final localMeasure = measureIndex - range.start;
+    final bounds = layouts.first.engine.measureBounds[localMeasure];
+    if (bounds == null) return null;
+
+    final measure = _allStaves.first.measures[measureIndex];
+    final timeSignature =
+        measure.timeSignature ?? measure.inheritedTimeSignature;
+    final measureBeats = timeSignature?.measureValue ?? 4.0;
+    final fraction = ((position.beat - 1.0) / measureBeats).clamp(0.0, 1.0);
+    return _PlayheadPlacement(
+      systemIndex: systemIndex,
+      x: bounds.start + (bounds.end - bounds.start) * fraction,
+    );
+  }
+
+  int? _measureIndexForNumber(int number) {
+    final staves = _allStaves;
+    for (final staff in staves) {
+      for (var index = 0; index < staff.measures.length; index++) {
+        if (staff.measures[index].number == number) return index;
+      }
+    }
+    final fallback = number - 1;
+    return fallback >= 0 &&
+            staves.isNotEmpty &&
+            fallback < staves.first.measures.length
+        ? fallback
+        : null;
   }
 
   void _drawStaffLabels(Canvas canvas, double baseline0, int systemIndex) {

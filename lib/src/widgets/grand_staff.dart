@@ -8,6 +8,7 @@ import 'dart:async' as async;
 import 'dart:core';
 import 'dart:core' as core;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/core.dart';
@@ -103,6 +104,9 @@ class GrandStaff extends StatefulWidget {
   /// Called with the tapped note and its global screen position.
   final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
 
+  /// Repaint-only playback cursor for the rendered system.
+  final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
+
   const GrandStaff({
     super.key,
     this.group,
@@ -113,6 +117,7 @@ class GrandStaff extends StatefulWidget {
     this.onNoteTap,
     this.metadata,
     this.onNoteTapWithPosition,
+    this.playbackPosition,
   }) : assert(
          group != null || groups != null,
          'Provide either group or groups',
@@ -233,6 +238,7 @@ class _GrandStaffState extends State<GrandStaff> {
               theme: widget.theme,
               availableWidth: width,
               staffGap: _gap,
+              playbackPosition: widget.playbackPosition,
             );
             final height = painter.totalHeight;
             return SizedBox(

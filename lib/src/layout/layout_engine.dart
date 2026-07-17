@@ -216,6 +216,13 @@ class LayoutEngine {
   final double staffSpace;
   final SmuflMetadata? metadata; // ✅ Tipagem correta aplicada
 
+  /// Final horizontal bounds for each local measure after justification.
+  /// Used by the score playhead to stay aligned with the rendered spacing.
+  final _measureBounds = <int, ({double start, double end})>{};
+
+  Map<int, ({double start, double end})> get measureBounds =>
+      Map.unmodifiable(_measureBounds);
+
   // System de Intelligent spacing
   late final spacing.IntelligentSpacingEngine _spacingEngine;
   late final spacing.SpacingPreferences _spacingPreferences;
@@ -224,8 +231,7 @@ class LayoutEngine {
   late final BeamAnalyzer _beamAnalyzer;
   final Map<Note, double> _noteXPositions = {};
   final Map<Note, int> _noteStaffPositions = {};
-  final Map<Note, double> _noteYPositions =
-      {}; // ✅ NOVO: Y absoluto em pixels
+  final Map<Note, double> _noteYPositions = {}; // ✅ NOVO: Y absoluto em pixels
   final List<AdvancedBeamGroup> _advancedBeamGroups = [];
 
   /// Within-measure accidental display decision per note (Behind Bars rule),
@@ -250,8 +256,7 @@ class LayoutEngine {
   // Intelligent spacing: Valores balanceados
   static const double systemMargin = 2.5;
   static const double measureMinWidth = 5.0;
-  static const double noteMinSpacing =
-      3.5; // Base para espaçamento entre notas
+  static const double noteMinSpacing = 3.5; // Base para espaçamento entre notas
   static const double measureEndPadding =
       3.0; // Espaço adequado ANTES da barline (agora corrigido!)
 
@@ -264,7 +269,8 @@ class LayoutEngine {
     spacing.SpacingPreferences? spacingPreferences,
   }) {
     // Initialise spacing engine
-    _spacingPreferences = spacingPreferences ?? spacing.SpacingPreferences.normal;
+    _spacingPreferences =
+        spacingPreferences ?? spacing.SpacingPreferences.normal;
     _spacingEngine = spacing.IntelligentSpacingEngine(
       preferences: _spacingPreferences,
     );
@@ -273,9 +279,7 @@ class LayoutEngine {
     // Initialise positioning engine for beaming
     // Validation: metadata can be null in some context
     if (metadata == null) {
-      throw ArgumentError(
-        'metadata é obrigatório para beaming avançado',
-      );
+      throw ArgumentError('metadata é obrigatório para beaming avançado');
     }
     final positioningEngine = SMuFLPositioningEngine(metadataLoader: metadata!);
 
@@ -549,8 +553,36 @@ class LayoutEngine {
 
     // ANÃƒÂLISE DE BEAMING AVANÃƒâ€¡ADO: Createsr AdvancedBeamGroups
     _analyzeBeamGroups(currentTimeSignature, positionedElements);
+    _updateMeasureBounds(positionedElements, measureStartIndices);
 
     return positionedElements;
+  }
+
+  void _updateMeasureBounds(
+    List<PositionedElement> elements,
+    Map<int, int> measureStartIndices,
+  ) {
+    _measureBounds.clear();
+    final keys = measureStartIndices.keys.toList()..sort();
+    for (var index = 0; index < keys.length; index++) {
+      final measure = keys[index];
+      final start = measureStartIndices[measure]!;
+      final end = index + 1 < keys.length
+          ? measureStartIndices[keys[index + 1]]!
+          : elements.length;
+      final measureElements = elements.sublist(start, end);
+      if (measureElements.isEmpty) continue;
+
+      var left = double.infinity;
+      var right = double.negativeInfinity;
+      for (final positioned in measureElements) {
+        left = left > positioned.position.dx ? positioned.position.dx : left;
+        right = right < positioned.position.dx ? positioned.position.dx : right;
+      }
+      if (left.isFinite && right.isFinite) {
+        _measureBounds[measure] = (start: left, end: right);
+      }
+    }
   }
 
   /// Analisa beam groups and Creates AdvancedBeamGroups for Rendering
@@ -698,15 +730,17 @@ class LayoutEngine {
       // Only a true full-bar rest: a whole rest (used as a measure rest in any
       // meter) or a rest whose value fills the measure.
       final ts = measure.timeSignature ?? measure.inheritedTimeSignature;
-      final isFullBar = rest.duration.type == DurationType.whole ||
+      final isFullBar =
+          rest.duration.type == DurationType.whole ||
           (ts != null &&
               !ts.isFreeTime &&
               rest.duration.realValue >= ts.measureValue - 1e-6);
       if (!isFullBar) continue;
 
       final start = measureStartIndices[i]!;
-      final end =
-          ki + 1 < keys.length ? measureStartIndices[keys[ki + 1]]! : elements.length;
+      final end = ki + 1 < keys.length
+          ? measureStartIndices[keys[ki + 1]]!
+          : elements.length;
 
       var restIdx = -1;
       double? barlineX;
@@ -1252,7 +1286,8 @@ class LayoutEngine {
       if (element.isAdditive) {
         // Group digits + one '+' separator slot per inter-group gap.
         final groups = element.additiveGroups!;
-        numDigits = groups.fold<int>(0, (a, g) => a + g.numerator.toString().length) +
+        numDigits =
+            groups.fold<int>(0, (a, g) => a + g.numerator.toString().length) +
             (groups.length - 1);
       } else {
         numDigits = element.numerator.toString().length;
