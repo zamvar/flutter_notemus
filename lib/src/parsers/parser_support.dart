@@ -1280,6 +1280,12 @@ class _MusicXmlImportParser {
           .where((e) => e.getAttribute('type') == 'composer')
           .firstOrNull
           ?.innerText,
+      arranger: root
+          .findAllElements('creator')
+          .where((e) => e.getAttribute('type') == 'arranger')
+          .firstOrNull
+          ?.innerText,
+      copyright: root.findAllElements('rights').firstOrNull?.innerText,
       staffGroups: groups,
     );
   }

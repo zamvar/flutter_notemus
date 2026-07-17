@@ -266,7 +266,9 @@ class _PagedScoreViewState extends State<PagedScoreView> {
   bool get _hasHeader =>
       widget.score.title?.isNotEmpty == true ||
       widget.score.subtitle?.isNotEmpty == true ||
-      widget.score.composer?.isNotEmpty == true;
+      widget.score.composer?.isNotEmpty == true ||
+      widget.score.arranger?.isNotEmpty == true ||
+      widget.score.copyright?.isNotEmpty == true;
 
   List<List<Score>> _pages(List<Score> systems, int systemsPerPage) {
     if (systems.isEmpty) return const [];
@@ -400,7 +402,9 @@ class _ScorePage extends StatelessWidget {
                 if (header != null &&
                     (header.title?.isNotEmpty == true ||
                         header.subtitle?.isNotEmpty == true ||
-                        header.composer?.isNotEmpty == true))
+                        header.composer?.isNotEmpty == true ||
+                        header.arranger?.isNotEmpty == true ||
+                        header.copyright?.isNotEmpty == true))
                   _ScoreHeader(
                     score: header,
                     width: contentWidth,
@@ -485,6 +489,32 @@ class _ScoreHeader extends StatelessWidget {
                 style: TextStyle(
                   color: Colors.black,
                   fontSize: staffSpace * 1.35,
+                ),
+              ),
+            ),
+          if (score.arranger?.isNotEmpty == true)
+            Align(
+              alignment: Alignment.topLeft,
+              child: Text(
+                'arr. ${score.arranger}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: staffSpace * 1.35,
+                ),
+              ),
+            ),
+          if (score.copyright?.isNotEmpty == true)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Text(
+                score.copyright!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: staffSpace * 1.05,
                 ),
               ),
             ),

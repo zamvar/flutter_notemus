@@ -212,18 +212,18 @@ class GrandStaffPainter extends CustomPainter {
 
     final usable = math.max(1.0, (availableWidth - _bracePad) - staffSpace);
     final lead = staffSpace * 4.0; // restated clef+key allowance per new system
-    // Allow measured notation to compress when needed, but keep the minimum
-    // scale high enough that normal paper layouts remain readable. The number
-    // of measures per line therefore changes with both page width and music
-    // density instead of being fixed by the widget.
-    const minimumSystemScale = 0.55;
-    final naturalWidthBudget = usable / minimumSystemScale;
+    // Choose breaks from the scale the line would actually need. This keeps
+    // the decision responsive to page width and measure density, instead of
+    // making six measures fit by shrinking the whole system excessively.
+    const minimumReadableScale = 0.72;
     final ranges = <({int start, int end})>[];
     var start = 0;
     var running = 0.0;
     for (var i = 0; i < nMeasures; i++) {
       final w = widths[i];
-      if (i > start && running + w > naturalWidthBudget) {
+      final candidateWidth = running + w;
+      final candidateScale = usable / math.max(usable, candidateWidth);
+      if (i > start && candidateScale < minimumReadableScale) {
         ranges.add((start: start, end: i - 1));
         start = i;
         running = lead + w;
