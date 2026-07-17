@@ -46,6 +46,15 @@ class GrandStaffPainter extends CustomPainter {
   /// measures so barlines line up).
   late final List<List<_StaffLayout>> _systems;
 
+  /// Inclusive source-measure ranges used for each rendered system.
+  ///
+  /// Consumers that paginate a score can use these ranges to keep the same
+  /// line breaks as the painter instead of guessing how many measures fit.
+  late final List<({int start, int end})> _systemRanges;
+
+  List<({int start, int end})> get systemRanges =>
+      List.unmodifiable(_systemRanges);
+
   /// Left padding reserved for the brace/bracket (and group name).
   late final double _bracePad;
 
@@ -70,14 +79,16 @@ class GrandStaffPainter extends CustomPainter {
     required this.theme,
     required this.availableWidth,
     double? staffGap,
-  })  : assert(staffGroup != null || groups != null,
-            'Provide either staffGroup or groups'),
-        groups = groups ?? [staffGroup!],
-        staffGap = staffGap ?? staffSpace * 11.0 {
+  }) : assert(
+         staffGroup != null || groups != null,
+         'Provide either staffGroup or groups',
+       ),
+       groups = groups ?? [staffGroup!],
+       staffGap = staffGap ?? staffSpace * 11.0 {
     _bracePad = staffSpace * 2.2;
-    final ranges = _computeSystemRanges();
+    _systemRanges = _computeSystemRanges();
     _systems = [
-      for (final range in ranges) _layoutSystem(range.start, range.end),
+      for (final range in _systemRanges) _layoutSystem(range.start, range.end),
     ];
   }
 
@@ -202,8 +213,7 @@ class GrandStaffPainter extends CustomPainter {
     double? contentStart;
     for (final pe in elements) {
       final e = pe.element;
-      if (contentStart == null &&
-          (e is Note || e is Rest || e is Chord)) {
+      if (contentStart == null && (e is Note || e is Rest || e is Chord)) {
         contentStart = pe.position.dx;
       }
       if (e is Barline) {
@@ -267,12 +277,14 @@ class GrandStaffPainter extends CustomPainter {
       final remapped = <PositionedElement>[];
       for (final pe in layouts[s].elements) {
         final nx = remap(pe.position.dx);
-        remapped.add(PositionedElement(
-          pe.element,
-          Offset(nx, pe.position.dy),
-          system: pe.system,
-          voiceNumber: pe.voiceNumber,
-        ));
+        remapped.add(
+          PositionedElement(
+            pe.element,
+            Offset(nx, pe.position.dy),
+            system: pe.system,
+            voiceNumber: pe.voiceNumber,
+          ),
+        );
         // Keep the engine's note-X map (used by beams) in sync.
         if (pe.element is Note) {
           layouts[s].engine.overrideNoteX(pe.element as Note, nx);
@@ -310,8 +322,7 @@ class GrandStaffPainter extends CustomPainter {
   ) {
     // Notes drawn by the cross-staff beam pass (skipped by their home staff).
     final skipPerStaff = [
-      for (var i = 0; i < layouts.length; i++)
-        _crossStaffNotesOf(layouts, i),
+      for (var i = 0; i < layouts.length; i++) _crossStaffNotesOf(layouts, i),
     ];
 
     for (var i = 0; i < layouts.length; i++) {
@@ -371,8 +382,9 @@ class GrandStaffPainter extends CustomPainter {
     for (final g in groups) {
       final gTop = baseline0 + staffIdx * staffGap - staffSpace * 2;
       final gBottom =
-          baseline0 + (staffIdx + g.staves.length - 1) * staffGap +
-              staffSpace * 2;
+          baseline0 +
+          (staffIdx + g.staves.length - 1) * staffGap +
+          staffSpace * 2;
       bracket.render(canvas, g, gTop, gBottom, leftX);
       staffIdx += g.staves.length;
     }
@@ -385,7 +397,7 @@ class GrandStaffPainter extends CustomPainter {
         ..color = theme.barlineColor
         ..strokeWidth =
             metadata.getEngravingDefault('thinBarlineThickness', 0.16) *
-                staffSpace;
+            staffSpace;
       canvas.drawLine(Offset(leftX, topY), Offset(leftX, bottomY), paint);
     }
   }
@@ -415,10 +427,10 @@ class GrandStaffPainter extends CustomPainter {
     double topY,
     double bottomY,
   ) {
-    final thin = metadata.getEngravingDefault('thinBarlineThickness', 0.16) *
-        staffSpace;
-    final thick = metadata.getEngravingDefault('thickBarlineThickness', 0.5) *
-        staffSpace;
+    final thin =
+        metadata.getEngravingDefault('thinBarlineThickness', 0.16) * staffSpace;
+    final thick =
+        metadata.getEngravingDefault('thickBarlineThickness', 0.5) * staffSpace;
     final color = theme.barlineColor;
     Paint p(double w) => Paint()
       ..color = color
@@ -533,10 +545,14 @@ class GrandStaffPainter extends CustomPainter {
         for (final note in g) {
           final x = noteX[note];
           if (x == null) continue;
-          final target = (home + note.crossStaffMove)
-              .clamp(0, _allStaves.length - 1);
-          final pos =
-              StaffPositionCalculator.calculate(note.pitch, _clefOf(target));
+          final target = (home + note.crossStaffMove).clamp(
+            0,
+            _allStaves.length - 1,
+          );
+          final pos = StaffPositionCalculator.calculate(
+            note.pitch,
+            _clefOf(target),
+          );
           final y = baseline0 + target * staffGap - pos * ss * 0.5;
           pts.add((x: x, y: y));
 
@@ -555,8 +571,9 @@ class GrandStaffPainter extends CustomPainter {
               ),
               textDirection: TextDirection.ltr,
             )..layout();
-            final baselineFromTop =
-                tp.computeDistanceToActualBaseline(TextBaseline.alphabetic);
+            final baselineFromTop = tp.computeDistanceToActualBaseline(
+              TextBaseline.alphabetic,
+            );
             tp.paint(canvas, Offset(x, y - baselineFromTop));
           }
         }
@@ -571,9 +588,8 @@ class GrandStaffPainter extends CustomPainter {
 
         // Stems attach at the notehead edge nearest the beam: a note below the
         // beam stems up (right edge); a note above stems down (left edge).
-        double stemXof(({double x, double y}) p) => p.y > beamY
-            ? p.x + noteheadW - stemW * 0.5
-            : p.x + stemW * 0.5;
+        double stemXof(({double x, double y}) p) =>
+            p.y > beamY ? p.x + noteheadW - stemW * 0.5 : p.x + stemW * 0.5;
         for (final p in pts) {
           final sx = stemXof(p);
           canvas.drawLine(Offset(sx, p.y), Offset(sx, beamY), stemPaint);
@@ -639,10 +655,8 @@ class GrandStaffPainter extends CustomPainter {
           final noteHead = metadata.getGlyphInfo(
             element.duration.type.glyphName,
           );
-          final centerX =
-              (noteHead?.boundingBox?.centerX ?? 0.59) * staffSpace;
-          final centerY =
-              (noteHead?.boundingBox?.centerY ?? 0.0) * staffSpace;
+          final centerX = (noteHead?.boundingBox?.centerX ?? 0.59) * staffSpace;
+          final centerY = (noteHead?.boundingBox?.centerY ?? 0.0) * staffSpace;
           final noteCenter = Offset(
             positioned.position.dx + centerX,
             baseline0 +
