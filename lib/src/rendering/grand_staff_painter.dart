@@ -732,8 +732,10 @@ class GrandStaffPainter extends CustomPainter {
   Note? noteAt(Offset position, {Note? lastNote}) {
     if (_systems.isEmpty) return null;
 
-    Note? closest;
-    var closestDistance = double.infinity;
+    Note? closestBroad;
+    var closestBroadDistance = double.infinity;
+    Note? closestNotehead;
+    var closestNoteheadDistance = double.infinity;
     final baseline0 = staffSpace * 5.0;
     final sequence = _noteSequence();
     final lastIndex = lastNote == null ? -1 : sequence.indexOf(lastNote);
@@ -758,12 +760,11 @@ class GrandStaffPainter extends CustomPainter {
             clef = element;
             continue;
           }
-          final notes = switch (element) {
-            Note note => [note],
-            Chord chord => chord.notes,
-            _ => const <Note>[],
-          };
-          for (final note in notes) {
+          for (final candidate in _positionedNotes(
+            element,
+            positioned.position.dx,
+          )) {
+            final note = candidate.note;
             final targetStaff = (staffIdx + note.crossStaffMove)
                 .clamp(0, _allStaves.length - 1)
                 .toInt();
@@ -782,7 +783,7 @@ class GrandStaffPainter extends CustomPainter {
             final centerY =
                 (noteHead?.boundingBox?.centerY ?? 0.0) * staffSpace;
             final noteCenter = Offset(
-              positioned.position.dx + centerX,
+              candidate.x + centerX,
               baseline0 +
                   targetStaff * staffGap -
                   staffStep * staffSpace * 0.5 +
@@ -794,15 +795,23 @@ class GrandStaffPainter extends CustomPainter {
               noteIndex: noteIndex,
               lastIndex: lastIndex,
             );
-            if (distance <= hitRadius && distance < closestDistance) {
-              closest = note;
-              closestDistance = distance;
+            if (distance <= hitRadius && distance < closestBroadDistance) {
+              closestBroad = note;
+              closestBroadDistance = distance;
+            }
+            // Notes remain the primary target even when a dynamic, tuplet
+            // number, or other text is visually drawn over the same area.
+            final noteheadRadius = math.max(staffSpace * 2.0, 10.0);
+            if (distance <= noteheadRadius &&
+                distance < closestNoteheadDistance) {
+              closestNotehead = note;
+              closestNoteheadDistance = distance;
             }
           }
         }
       }
     }
-    return closest;
+    return closestNotehead ?? closestBroad;
   }
 
   List<Note> _noteSequence() {
@@ -812,18 +821,38 @@ class GrandStaffPainter extends CustomPainter {
       for (final layout in system) {
         for (final positioned in layout.elements) {
           final element = positioned.element;
-          final candidates = switch (element) {
-            Note note => [note],
-            Chord chord => chord.notes,
-            _ => const <Note>[],
-          };
-          for (final note in candidates) {
+          for (final candidate in _positionedNotes(
+            element,
+            positioned.position.dx,
+          )) {
+            final note = candidate.note;
             if (seen.add(note)) notes.add(note);
           }
         }
       }
     }
     return notes;
+  }
+
+  /// Returns note positions in the same coordinate model used by the staff
+  /// renderer. Tuplet notes are children of one positioned Tuplet element, so
+  /// their x positions must be reconstructed from the renderer's slot spacing.
+  List<({Note note, double x})> _positionedNotes(
+    MusicalElement element,
+    double baseX,
+  ) {
+    if (element is Note) return [(note: element, x: baseX)];
+    if (element is Chord) {
+      return [for (final note in element.notes) (note: note, x: baseX)];
+    }
+    if (element is Tuplet) {
+      final spacing = staffSpace * 2.5;
+      return [
+        for (var index = 0; index < element.notes.length; index++)
+          (note: element.notes[index], x: baseX + index * spacing),
+      ];
+    }
+    return const [];
   }
 
   double _hitRadiusFor({required int noteIndex, required int lastIndex}) {
