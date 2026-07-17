@@ -1,5 +1,7 @@
 // lib/src/rendering/grand_staff_painter.dart
 //
+import 'dart:math' as math;
+
 // Multi-staff rendering for one or more [StaffGroup]s (grand staff, SATB, or a
 // full multi-section score). Lays out each staff, aligns them on a shared
 // horizontal grid (content start and barlines line up across all staves),
@@ -85,7 +87,7 @@ class GrandStaffPainter extends CustomPainter {
        ),
        groups = groups ?? [staffGroup!],
        staffGap = staffGap ?? staffSpace * 11.0 {
-    _bracePad = staffSpace * 2.2;
+    _bracePad = _calculateBracePad();
     _systemRanges = _computeSystemRanges();
     _systems = [
       for (final range in _systemRanges) _layoutSystem(range.start, range.end),
@@ -130,7 +132,7 @@ class GrandStaffPainter extends CustomPainter {
     for (var i = a; i <= b && i < staff.measures.length; i++) {
       final orig = staff.measures[i];
       if (i == a && a > 0) {
-        final m = Measure();
+        final m = Measure(number: orig.number);
         if (!orig.elements.any((e) => e is Clef) && clef != null) m.add(clef);
         if (!orig.elements.any((e) => e is KeySignature) &&
             key != null &&
@@ -145,7 +147,29 @@ class GrandStaffPainter extends CustomPainter {
         measures.add(orig);
       }
     }
-    return Staff(measures: measures);
+    return Staff(
+      measures: measures,
+      lineCount: staff.lineCount,
+      name: staff.name,
+      abbreviation: staff.abbreviation,
+    );
+  }
+
+  double _calculateBracePad() {
+    var width = staffSpace * 2.2;
+    for (final staff in _allStaves) {
+      final label = staff.name;
+      if (label == null || label.isEmpty) continue;
+      final painter = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: TextStyle(fontSize: staffSpace * 1.1),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      width = math.max(width, painter.width + staffSpace * 1.2);
+    }
+    return width;
   }
 
   /// Per-measure widths laid out unwrapped, used to decide shared breaks.
@@ -309,7 +333,7 @@ class GrandStaffPainter extends CustomPainter {
       if (layouts.isEmpty) continue;
       canvas.save();
       canvas.translate(0, sysIdx * systemBlockHeight);
-      _paintSystem(canvas, size, layouts, baseline0);
+      _paintSystem(canvas, size, layouts, baseline0, sysIdx);
       canvas.restore();
     }
   }
@@ -319,6 +343,7 @@ class GrandStaffPainter extends CustomPainter {
     Size size,
     List<_StaffLayout> layouts,
     double baseline0,
+    int systemIndex,
   ) {
     // Notes drawn by the cross-staff beam pass (skipped by their home staff).
     final skipPerStaff = [
@@ -349,6 +374,9 @@ class GrandStaffPainter extends CustomPainter {
       );
       canvas.restore();
     }
+
+    _drawStaffLabels(canvas, baseline0, systemIndex);
+    _drawMeasureNumber(canvas, baseline0, systemIndex);
 
     // Cross-staff beam groups, drawn after the staves so the beam sits between.
     _drawCrossStaffBeams(canvas, baseline0, layouts);
@@ -400,6 +428,68 @@ class GrandStaffPainter extends CustomPainter {
             staffSpace;
       canvas.drawLine(Offset(leftX, topY), Offset(leftX, bottomY), paint);
     }
+  }
+
+  void _drawStaffLabels(Canvas canvas, double baseline0, int systemIndex) {
+    final available = math.max(1.0, _bracePad - staffSpace * 0.8);
+    for (var index = 0; index < _allStaves.length; index++) {
+      final staff = _allStaves[index];
+      final fullName = staff.name;
+      if (fullName == null || fullName.isEmpty) continue;
+      final label = systemIndex == 0
+          ? fullName
+          : staff.abbreviation ?? _shortLabel(fullName);
+      final painter = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: (theme.textStyle ?? const TextStyle()).copyWith(
+            color: theme.textColor ?? theme.noteheadColor,
+            fontSize: staffSpace * 1.1,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout(maxWidth: available);
+      painter.paint(
+        canvas,
+        Offset(
+          -_bracePad,
+          baseline0 + index * staffGap - painter.height * 0.55,
+        ),
+      );
+    }
+  }
+
+  String _shortLabel(String label) {
+    final normalized = label.trim().toLowerCase();
+    if (normalized.startsWith('baritone')) return 'Bar.';
+    if (normalized.startsWith('bass')) return 'B.';
+    if (normalized.startsWith('tenor')) {
+      final suffix = label.substring('Tenor'.length).trim();
+      return suffix.isEmpty ? 'T.' : 'T. $suffix';
+    }
+    if (normalized.startsWith('soprano')) return 'S.';
+    if (normalized.startsWith('alto')) return 'A.';
+    if (normalized.startsWith('solo')) return 'Solo';
+    return label.length > 6 ? '${label.substring(0, 6)}.' : label;
+  }
+
+  void _drawMeasureNumber(Canvas canvas, double baseline0, int systemIndex) {
+    if (systemIndex == 0 || _allStaves.isEmpty) return;
+    final number = _allStaves.first.measures.firstOrNull?.number;
+    if (number == null) return;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '$number',
+        style: (theme.textStyle ?? const TextStyle()).copyWith(
+          color: theme.textColor ?? theme.noteheadColor,
+          fontSize: staffSpace * 0.95,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(canvas, Offset(0, baseline0 - staffSpace * 4.0));
   }
 
   /// The system's barlines (x + type), taken from the (aligned) first staff —

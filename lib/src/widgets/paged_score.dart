@@ -250,12 +250,20 @@ class _PagedScoreViewState extends State<PagedScoreView> {
         math.max(0, staffCount - 1) * staffGap + widget.staffSpace * 10.0;
     final systemHeight = systemBlockHeight + widget.staffSpace * 2.0;
     final systemGap = widget.staffSpace * 4.0;
-    final contentHeight = widget.pageHeight - widget.pageMargin * 2.0;
+    final contentHeight =
+        widget.pageHeight -
+        widget.pageMargin * 2.0 -
+        (_hasHeader ? widget.staffSpace * 12.0 : 0.0);
     return math.max(
       1,
       ((contentHeight + systemGap) / (systemHeight + systemGap)).floor(),
     );
   }
+
+  bool get _hasHeader =>
+      widget.score.title?.isNotEmpty == true ||
+      widget.score.subtitle?.isNotEmpty == true ||
+      widget.score.composer?.isNotEmpty == true;
 
   List<List<Score>> _pages(List<Score> systems, int systemsPerPage) {
     if (systems.isEmpty) return const [];
@@ -285,13 +293,22 @@ class _PagedScoreViewState extends State<PagedScoreView> {
 
   Staff _sliceStaff(Staff source, int start, int endInclusive) {
     if (source.measures.isEmpty || start >= source.measures.length) {
-      return Staff(lineCount: source.lineCount);
+      return Staff(
+        lineCount: source.lineCount,
+        name: source.name,
+        abbreviation: source.abbreviation,
+      );
     }
 
     final actualEnd = math.min(endInclusive + 1, source.measures.length);
     final selected = source.measures.sublist(start, actualEnd);
     if (start == 0 || selected.isEmpty) {
-      return Staff(measures: selected, lineCount: source.lineCount);
+      return Staff(
+        measures: selected,
+        lineCount: source.lineCount,
+        name: source.name,
+        abbreviation: source.abbreviation,
+      );
     }
 
     // Carry state into a new system so clefs, keys, and meters remain readable
@@ -317,6 +334,8 @@ class _PagedScoreViewState extends State<PagedScoreView> {
 
     return Staff(
       lineCount: source.lineCount,
+      name: source.name,
+      abbreviation: source.abbreviation,
       measures: [firstSystemMeasure, ...selected.skip(1)],
     );
   }
@@ -360,6 +379,7 @@ class _ScorePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final contentWidth = math.max(1.0, width - margin * 2.0);
     final systemGap = staffSpace * 4.0;
+    final header = systems.firstOrNull;
     return Material(
       color: Colors.white,
       elevation: 2.0,
@@ -372,6 +392,15 @@ class _ScorePage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (header != null &&
+                    (header.title?.isNotEmpty == true ||
+                        header.subtitle?.isNotEmpty == true ||
+                        header.composer?.isNotEmpty == true))
+                  _ScoreHeader(
+                    score: header,
+                    width: contentWidth,
+                    staffSpace: staffSpace,
+                  ),
                 for (var index = 0; index < systems.length; index++) ...[
                   SizedBox(
                     width: contentWidth,
@@ -389,6 +418,71 @@ class _ScorePage extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ScoreHeader extends StatelessWidget {
+  final Score score;
+  final double width;
+  final double staffSpace;
+
+  const _ScoreHeader({
+    required this.score,
+    required this.width,
+    required this.staffSpace,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      height: staffSpace * 12.0,
+      child: Stack(
+        children: [
+          if (score.title?.isNotEmpty == true)
+            Align(
+              alignment: Alignment.topCenter,
+              child: Text(
+                score.title!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: staffSpace * 3.0,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          if (score.subtitle?.isNotEmpty == true)
+            Align(
+              alignment: const Alignment(0, 0.2),
+              child: Text(
+                score.subtitle!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: staffSpace * 1.65,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          if (score.composer?.isNotEmpty == true)
+            Align(
+              alignment: Alignment.topRight,
+              child: Text(
+                score.composer!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: staffSpace * 1.35,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

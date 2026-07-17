@@ -23,6 +23,12 @@ class Staff {
   /// All measures in this staff, in chronological order.
   final List<Measure> measures;
 
+  /// Full part/staff name shown at the first system.
+  final String? name;
+
+  /// Short part/staff name shown on later systems when available.
+  final String? abbreviation;
+
   /// Number of staff lines. Defaults to 5 (CMN). Valid values per MEI:
   /// - 1: percussion / single-line notetion
   /// - 4: 4-string tablature / some historical notetions
@@ -38,8 +44,12 @@ class Staff {
   ///
   /// If [measures] is omitted an empty list is used, and measures can be
   /// added later via [add].
-  Staff({List<Measure>? measures, this.lineCount = 5})
-      : measures = measures ?? [];
+  Staff({
+    List<Measure>? measures,
+    this.lineCount = 5,
+    this.name,
+    this.abbreviation,
+  }) : measures = measures ?? [];
 
   /// Appends a [Measure] to the end of this staff.
   void add(Measure measure) => measures.add(measure);
