@@ -558,7 +558,11 @@ class GrandStaffPainter extends CustomPainter {
     final measure = _allStaves.first.measures[measureIndex];
     final timeSignature =
         measure.timeSignature ?? measure.inheritedTimeSignature;
-    final measureBeats = timeSignature?.measureValue ?? 4.0;
+    // MusicXML's measureValue is whole-note relative (4/4 == 1.0), while
+    // playback positions use quarter-note beats (4/4 == 4.0).
+    final measureBeats = timeSignature == null
+        ? 4.0
+        : timeSignature.measureValue * 4.0;
     final fraction = ((position.beat - 1.0) / measureBeats).clamp(0.0, 1.0);
     return _PlayheadPlacement(
       systemIndex: systemIndex,
