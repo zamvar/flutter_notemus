@@ -107,6 +107,9 @@ class GrandStaff extends StatefulWidget {
   /// Repaint-only playback cursor for the rendered system.
   final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
 
+  /// Called when the user taps the rendered space belonging to a measure.
+  final ValueChanged<ScoreMeasureTap>? onMeasureTap;
+
   const GrandStaff({
     super.key,
     this.group,
@@ -118,6 +121,7 @@ class GrandStaff extends StatefulWidget {
     this.metadata,
     this.onNoteTapWithPosition,
     this.playbackPosition,
+    this.onMeasureTap,
   }) : assert(
          group != null || groups != null,
          'Provide either group or groups',
@@ -184,6 +188,15 @@ class _GrandStaffState extends State<GrandStaff> {
       _pointerMoved = false;
       _lastSwipedNote = null;
       return;
+    }
+    final measureNumber = painter.measureAt(details.localPosition);
+    if (measureNumber != null) {
+      widget.onMeasureTap?.call(
+        ScoreMeasureTap(
+          measureNumber: measureNumber,
+          globalPosition: details.globalPosition,
+        ),
+      );
     }
     final note = painter.noteAt(
       details.localPosition,
@@ -278,7 +291,8 @@ class _GrandStaffState extends State<GrandStaff> {
                   behavior: HitTestBehavior.opaque,
                   onTapUp:
                       widget.onNoteTap == null &&
-                          widget.onNoteTapWithPosition == null
+                          widget.onNoteTapWithPosition == null &&
+                          widget.onMeasureTap == null
                       ? null
                       : (details) => _handleNoteTap(details, painter),
                   child: CustomPaint(

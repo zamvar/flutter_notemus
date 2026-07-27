@@ -90,6 +90,7 @@ class PagedScoreView extends StatefulWidget {
   final double staffSpace;
   final ValueChanged<Note>? onNoteTap;
   final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
+  final ValueChanged<ScoreMeasureTap>? onMeasureTap;
   final PagedScoreController? controller;
   final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
 
@@ -107,6 +108,7 @@ class PagedScoreView extends StatefulWidget {
     this.staffSpace = 12.0,
     this.onNoteTap,
     this.onNoteTapWithPosition,
+    this.onMeasureTap,
     this.controller,
     this.playbackPosition,
     this.pageWidth = 595.0,
@@ -280,6 +282,7 @@ class _PagedScoreViewState extends State<PagedScoreView> {
                         theme: widget.theme,
                         onNoteTap: widget.onNoteTap,
                         onNoteTapWithPosition: widget.onNoteTapWithPosition,
+                        onMeasureTap: widget.onMeasureTap,
                         playbackPosition: widget.playbackPosition,
                       ),
                     ),
@@ -435,6 +438,7 @@ class _ScorePage extends StatelessWidget {
   final MusicScoreTheme theme;
   final ValueChanged<Note>? onNoteTap;
   final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
+  final ValueChanged<ScoreMeasureTap>? onMeasureTap;
   final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
 
   const _ScorePage({
@@ -447,6 +451,7 @@ class _ScorePage extends StatelessWidget {
     required this.theme,
     required this.onNoteTap,
     required this.onNoteTapWithPosition,
+    required this.onMeasureTap,
     required this.playbackPosition,
   });
 
@@ -488,6 +493,7 @@ class _ScorePage extends StatelessWidget {
                       theme: theme,
                       onNoteTap: onNoteTap,
                       onNoteTapWithPosition: onNoteTapWithPosition,
+                      onMeasureTap: onMeasureTap,
                       playbackPosition: playbackPosition,
                     ),
                   ),

@@ -41,6 +41,21 @@ class ScorePlaybackPosition {
   });
 }
 
+/// A tap on the horizontal space occupied by a rendered measure.
+class ScoreMeasureTap {
+  /// MusicXML measure number, or the one-based measure index when the source
+  /// did not provide explicit numbers.
+  final int measureNumber;
+
+  /// Screen position of the tap, useful for contextual UI.
+  final Offset globalPosition;
+
+  const ScoreMeasureTap({
+    required this.measureNumber,
+    required this.globalPosition,
+  });
+}
+
 class _PlayheadPlacement {
   final int systemIndex;
   final double x;
@@ -536,6 +551,57 @@ class GrandStaffPainter extends CustomPainter {
     return _systemRanges.any(
       (range) => measureIndex >= range.start && measureIndex <= range.end,
     );
+  }
+
+  /// Resolves a local canvas position to the measure under the tap.
+  ///
+  /// The hit test follows the same system scale and measure bounds used by
+  /// painting, so it stays aligned when the layout wraps or compresses a
+  /// system to fit the available width.
+  int? measureAt(Offset position) {
+    if (_systems.isEmpty || _allStaves.isEmpty) return null;
+
+    for (var systemIndex = 0; systemIndex < _systems.length; systemIndex++) {
+      final systemY = position.dy - systemIndex * systemBlockHeight;
+      if (systemY < -staffSpace * 4.0 ||
+          systemY > systemBlockHeight + staffSpace * 4.0) {
+        continue;
+      }
+
+      final x = (position.dx - _bracePad) / _systemScales[systemIndex];
+      final range = _systemRanges[systemIndex];
+      final layouts = _systems[systemIndex];
+      if (layouts.isEmpty) continue;
+
+      final bounds = layouts.first.engine.measureBounds;
+      for (
+        var localMeasure = 0;
+        localMeasure <= range.end - range.start;
+        localMeasure++
+      ) {
+        final current = bounds[localMeasure];
+        if (current == null) continue;
+
+        final previous = localMeasure == 0 ? null : bounds[localMeasure - 1];
+        final next = bounds[localMeasure + 1];
+        final start = previous == null
+            ? current.start - staffSpace * 4.0
+            : (previous.end + current.start) / 2.0;
+        final end = next == null
+            ? current.end + staffSpace * 4.0
+            : (current.end + next.start) / 2.0;
+        if (x < start || x > end) continue;
+
+        final measureIndex = range.start + localMeasure;
+        if (measureIndex < 0 ||
+            measureIndex >= _allStaves.first.measures.length) {
+          return null;
+        }
+        return _allStaves.first.measures[measureIndex].number ??
+            measureIndex + 1;
+      }
+    }
+    return null;
   }
 
   _PlayheadPlacement? _playheadForSystem(
