@@ -564,10 +564,32 @@ class GrandStaffPainter extends CustomPainter {
         ? 4.0
         : timeSignature.measureValue * 4.0;
     final fraction = ((position.beat - 1.0) / measureBeats).clamp(0.0, 1.0);
+    final rhythmicStart = _rhythmicStartForMeasure(layouts, bounds);
     return _PlayheadPlacement(
       systemIndex: systemIndex,
-      x: bounds.start + (bounds.end - bounds.start) * fraction,
+      x: rhythmicStart + (bounds.end - rhythmicStart) * fraction,
     );
+  }
+
+  double _rhythmicStartForMeasure(
+    List<_StaffLayout> layouts,
+    ({double start, double end}) bounds,
+  ) {
+    var start = double.infinity;
+    for (final layout in layouts) {
+      for (final positioned in layout.elements) {
+        final x = positioned.position.dx;
+        if (x < bounds.start || x > bounds.end) continue;
+        final element = positioned.element;
+        if (element is Note ||
+            element is Rest ||
+            element is Chord ||
+            element is Tuplet) {
+          start = math.min(start, x);
+        }
+      }
+    }
+    return start.isFinite ? start : bounds.start;
   }
 
   int? _measureIndexForNumber(int number) {
