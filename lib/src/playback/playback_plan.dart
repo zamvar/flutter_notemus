@@ -367,7 +367,11 @@ List<PlaybackNoteOccurrence> _buildNoteOccurrences({
       }) {
         var localTick = occurrence.startTick;
 
-        int visit(MusicalElement element, double multiplier) {
+        int visit(
+          MusicalElement element,
+          int elementStartTick,
+          double multiplier,
+        ) {
           if (element is Note) {
             final writtenTicks = _durationTicks(
               element.duration.realValue,
@@ -383,8 +387,11 @@ List<PlaybackNoteOccurrence> _buildNoteOccurrences({
                     )
                   : writtenTicks;
               final startTick = element.isGraceNote
-                  ? math.max(occurrence.startTick, localTick - graceTicks)
-                  : localTick;
+                  ? math.max(
+                      occurrence.startTick,
+                      elementStartTick - graceTicks,
+                    )
+                  : elementStartTick;
               final endTick = startTick + graceTicks;
               result.add(
                 PlaybackNoteOccurrence(
@@ -426,10 +433,10 @@ List<PlaybackNoteOccurrence> _buildNoteOccurrences({
                   staffIndex: staffIndex,
                   voiceNumber: voiceNumber,
                   midiNote: note.pitch.midiNumber.clamp(0, 127),
-                  startTick: localTick,
-                  endTick: localTick + ticks,
-                  start: tempoMap.durationAtTick(localTick),
-                  end: tempoMap.durationAtTick(localTick + ticks),
+                  startTick: elementStartTick,
+                  endTick: elementStartTick + ticks,
+                  start: tempoMap.durationAtTick(elementStartTick),
+                  end: tempoMap.durationAtTick(elementStartTick + ticks),
                 ),
               );
             }
@@ -451,17 +458,19 @@ List<PlaybackNoteOccurrence> _buildNoteOccurrences({
           }
           if (element is Tuplet) {
             final tupletMultiplier = multiplier * element.ratio.modifier;
+            var tupletTick = elementStartTick;
             for (final child in element.elements) {
-              final childTicks = visit(child, tupletMultiplier);
-              localTick += childTicks;
+              final childTicks = visit(child, tupletTick, tupletMultiplier);
+              tupletTick += childTicks;
             }
-            return 0;
+            return tupletTick - elementStartTick;
           }
           return 0;
         }
 
         for (final element in elements) {
-          localTick += visit(element, 1.0);
+          final consumedTicks = visit(element, localTick, 1.0);
+          localTick += consumedTicks;
         }
       }
 

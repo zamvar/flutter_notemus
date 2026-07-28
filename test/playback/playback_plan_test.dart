@@ -57,6 +57,18 @@ void main() {
         ),
         isTrue,
       );
+      expect(
+        plans.first.noteEvents.every((event) => event.sourceNoteId != null),
+        isTrue,
+      );
+      expect(
+        plans.first.noteEvents
+            .singleWhere(
+              (event) => event.midiNote == 79 && event.startTick == 4800,
+            )
+            .sourceNoteId,
+        isNotNull,
+      );
     });
 
     test('one staff repeat order drives every staff', () {
@@ -141,6 +153,104 @@ void main() {
         plan.noteEvents.map((event) => event.start.inMilliseconds).toList(),
         [0, 1000],
       );
+    });
+
+    test('MusicXML tuplet timing advances before the following note', () {
+      const musicXml = '''
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Voice</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>3</divisions>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+      </attributes>
+      <direction>
+        <direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>60</per-minute></metronome></direction-type>
+      </direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>1</duration><voice>1</voice><type>eighth</type>
+        <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+        <notations><tuplet type="start"/></notations>
+      </note>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>1</duration><voice>1</voice><type>eighth</type>
+        <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+      </note>
+      <note>
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>1</duration><voice>1</voice><type>eighth</type>
+        <time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>
+        <notations><tuplet type="stop"/></notations>
+      </note>
+      <note>
+        <pitch><step>F</step><octave>4</octave></pitch>
+        <duration>3</duration><voice>1</voice><type>quarter</type>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
+''';
+      final plan = PlaybackPlan.fromDocument(
+        NotemusDocument.fromMusicXml(musicXml),
+      );
+
+      expect(plan.noteEvents.map((event) => event.startTick).toList(), [
+        0,
+        320,
+        640,
+        960,
+      ]);
+      expect(plan.noteEvents.map((event) => event.midiNote).toList(), [
+        60,
+        62,
+        64,
+        65,
+      ]);
+      expect(
+        plan.noteEvents.map((event) => event.start.inMilliseconds).toList(),
+        [0, 333, 666, 1000],
+      );
+      expect(
+        plan.noteEvents.every((event) => event.sourceNoteId != null),
+        isTrue,
+      );
+    });
+
+    test('MusicXML metronome beat unit is normalized to quarter-note BPM', () {
+      const musicXml = '''
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Voice</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+      </attributes>
+      <direction>
+        <direction-type><metronome><beat-unit>half</beat-unit><per-minute>60</per-minute></metronome></direction-type>
+      </direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>1</duration><voice>1</voice><type>quarter</type>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
+''';
+      final plan = PlaybackPlan.fromDocument(
+        NotemusDocument.fromMusicXml(musicXml),
+      );
+
+      expect(plan.tempoChanges.first.bpm, 120);
+      expect(plan.noteEvents.single.start.inMilliseconds, 0);
+      expect(plan.durationAtTick(960).inMilliseconds, 500);
     });
 
     test('implicit MusicXML pickup uses its exact source duration', () {
