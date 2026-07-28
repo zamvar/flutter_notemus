@@ -15,14 +15,7 @@ import '../../core/core.dart';
 import '../rendering/grand_staff_painter.dart';
 import '../smufl/smufl_metadata_loader.dart';
 import '../theme/music_score_theme.dart';
-
-/// A note tap plus its screen position, used for contextual note feedback.
-class ScoreNoteTap {
-  final Note note;
-  final Offset globalPosition;
-
-  const ScoreNoteTap({required this.note, required this.globalPosition});
-}
+import 'score_interaction.dart';
 
 /// Renders a whole [Score] — each of its [StaffGroup]s as a [GrandStaff],
 /// stacked vertically. A single-group score (piano, SATB) renders as one
@@ -110,6 +103,12 @@ class GrandStaff extends StatefulWidget {
   /// Called when the user taps the rendered space belonging to a measure.
   final ValueChanged<ScoreMeasureTap>? onMeasureTap;
 
+  /// Inclusive source-measure range to render as one system.
+  ///
+  /// Pagination uses this to retain the original measure objects and their
+  /// voices instead of copying score slices into lossy temporary measures.
+  final ({int start, int end})? measureRange;
+
   const GrandStaff({
     super.key,
     this.group,
@@ -122,6 +121,7 @@ class GrandStaff extends StatefulWidget {
     this.onNoteTapWithPosition,
     this.playbackPosition,
     this.onMeasureTap,
+    this.measureRange,
   }) : assert(
          group != null || groups != null,
          'Provide either group or groups',
@@ -143,6 +143,8 @@ class _GrandStaffState extends State<GrandStaff> {
   var _pointerMoved = false;
   var _lastNoteEventMs = 0;
   _ScopedPlaybackPosition? _playheadScope;
+  GrandStaffPainter? _cachedPainter;
+  double? _cachedPainterWidth;
 
   @override
   void initState() {
@@ -159,6 +161,16 @@ class _GrandStaffState extends State<GrandStaff> {
     if (oldWidget.metadata != widget.metadata && widget.metadata != null) {
       _metadata = widget.metadata!;
       _metadataFuture = Future<void>.value();
+    }
+    if (!identical(oldWidget.group, widget.group) ||
+        !identical(oldWidget.groups, widget.groups) ||
+        !identical(oldWidget.theme, widget.theme) ||
+        oldWidget.staffSpace != widget.staffSpace ||
+        oldWidget.staffGap != widget.staffGap ||
+        oldWidget.measureRange != widget.measureRange ||
+        oldWidget.metadata != widget.metadata) {
+      _cachedPainter = null;
+      _cachedPainterWidth = null;
     }
   }
 
@@ -222,6 +234,23 @@ class _GrandStaffState extends State<GrandStaff> {
 
   double get _gap => widget.staffGap ?? widget.staffSpace * 11.0;
 
+  GrandStaffPainter _painterFor(double width) {
+    final cached = _cachedPainter;
+    if (cached != null && _cachedPainterWidth == width) return cached;
+    final painter = GrandStaffPainter(
+      groups: widget._groups,
+      staffSpace: widget.staffSpace,
+      metadata: _metadata,
+      theme: widget.theme,
+      availableWidth: width,
+      staffGap: _gap,
+      measureRange: widget.measureRange,
+    );
+    _cachedPainter = painter;
+    _cachedPainterWidth = width;
+    return painter;
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<void>(
@@ -246,14 +275,7 @@ class _GrandStaffState extends State<GrandStaff> {
                 ? constraints.maxWidth
                 : 800.0;
             // Build the painter first so we can size to its (multi-system) height.
-            final painter = GrandStaffPainter(
-              groups: widget._groups,
-              staffSpace: widget.staffSpace,
-              metadata: _metadata,
-              theme: widget.theme,
-              availableWidth: width,
-              staffGap: _gap,
-            );
+            final painter = _painterFor(width);
             final sourcePlaybackPosition = widget.playbackPosition;
             if (sourcePlaybackPosition == null) {
               _playheadScope?.dispose();

@@ -2,12 +2,15 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../../core/core.dart';
 import '../rendering/grand_staff_painter.dart';
+import '../layout/score_layout.dart';
 import '../smufl/smufl_metadata_loader.dart';
 import '../theme/music_score_theme.dart';
-import 'grand_staff.dart';
+import 'score_interaction.dart';
+import 'score_layout_region.dart';
 
 /// Controls page navigation and the zoom transform for [PagedScoreView].
 class PagedScoreController extends ChangeNotifier {
@@ -88,11 +91,15 @@ class PagedScoreView extends StatefulWidget {
   final Score score;
   final MusicScoreTheme theme;
   final double staffSpace;
+  final double? staffGap;
   final ValueChanged<Note>? onNoteTap;
   final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
   final ValueChanged<ScoreMeasureTap>? onMeasureTap;
   final PagedScoreController? controller;
   final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
+  final SmuflMetadata? metadata;
+  final ScoreLayoutCache? cache;
+  final ValueChanged<ScoreLayout>? onLayoutChanged;
 
   /// Page size in points. A4 portrait is the default.
   final double pageWidth;
@@ -106,11 +113,15 @@ class PagedScoreView extends StatefulWidget {
     required this.score,
     this.theme = const MusicScoreTheme(),
     this.staffSpace = 12.0,
+    this.staffGap,
     this.onNoteTap,
     this.onNoteTapWithPosition,
     this.onMeasureTap,
     this.controller,
     this.playbackPosition,
+    this.metadata,
+    this.cache,
+    this.onLayoutChanged,
     this.pageWidth = 595.0,
     this.pageHeight = 842.0,
     this.pageMargin = 40.0,
@@ -123,19 +134,18 @@ class PagedScoreView extends StatefulWidget {
 }
 
 class _PagedScoreViewState extends State<PagedScoreView> {
-  late final SmuflMetadata _metadata;
-  late final Future<void> _metadataFuture;
+  late SmuflMetadata _metadata;
+  late Future<void> _metadataFuture;
   late PagedScoreController _controller;
   var _ownsController = false;
-  List<({int start, int end})> _playbackSystemRanges = const [];
-  int _playbackSystemsPerPage = 1;
+  ScoreLayout? _layout;
+  ScoreLayout? _lastReportedLayout;
   int? _lastPlaybackMeasureNumber;
 
   @override
   void initState() {
     super.initState();
-    _metadata = SmuflMetadata();
-    _metadataFuture = _metadata.load();
+    _setMetadata(widget.metadata);
     _controller = widget.controller ?? PagedScoreController();
     _ownsController = widget.controller == null;
     widget.playbackPosition?.addListener(_handlePlaybackPosition);
@@ -144,6 +154,9 @@ class _PagedScoreViewState extends State<PagedScoreView> {
   @override
   void didUpdateWidget(covariant PagedScoreView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.metadata != widget.metadata) {
+      _setMetadata(widget.metadata);
+    }
     if (oldWidget.controller != widget.controller) {
       if (_ownsController) _controller.dispose();
       _controller = widget.controller ?? PagedScoreController();
@@ -153,6 +166,23 @@ class _PagedScoreViewState extends State<PagedScoreView> {
       oldWidget.playbackPosition?.removeListener(_handlePlaybackPosition);
       widget.playbackPosition?.addListener(_handlePlaybackPosition);
     }
+  }
+
+  void _setMetadata(SmuflMetadata? metadata) {
+    _metadata = metadata ?? SmuflMetadata();
+    _metadataFuture = metadata == null
+        ? _metadata.load()
+        : Future<void>.value();
+  }
+
+  void _reportLayout(ScoreLayout layout) {
+    if (_lastReportedLayout == layout) return;
+    _lastReportedLayout = layout;
+    final callback = widget.onLayoutChanged;
+    if (callback == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _lastReportedLayout == layout) callback(layout);
+    });
   }
 
   @override
@@ -169,26 +199,37 @@ class _PagedScoreViewState extends State<PagedScoreView> {
       return;
     }
     if (position.measureNumber == _lastPlaybackMeasureNumber ||
-        _playbackSystemRanges.isEmpty) {
+        _layout == null) {
       return;
     }
     _lastPlaybackMeasureNumber = position.measureNumber;
 
     final measureIndex = _measureIndexForNumber(position.measureNumber);
     if (measureIndex == null) return;
-    final systemIndex = _playbackSystemRanges.indexWhere(
-      (range) => measureIndex >= range.start && measureIndex <= range.end,
-    );
-    if (systemIndex < 0) return;
-
-    final page = systemIndex ~/ _playbackSystemsPerPage;
+    final page = _layout?.pageForMeasureIndex(measureIndex)?.index;
+    if (page == null) return;
     if (page == _controller.currentPage || page >= _controller.pageCount) {
       return;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || page >= _controller.pageCount) return;
+    _jumpToPlaybackPage(page);
+  }
+
+  void _jumpToPlaybackPage(int page) {
+    void jump() {
+      if (!mounted ||
+          page >= _controller.pageCount ||
+          !_controller.pageController.hasClients) {
+        return;
+      }
       _controller.pageController.jumpToPage(page);
-    });
+    }
+
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle &&
+        _controller.pageController.hasClients) {
+      jump();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => jump());
+    }
   }
 
   int? _measureIndexForNumber(int number) {
@@ -225,22 +266,39 @@ class _PagedScoreViewState extends State<PagedScoreView> {
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            var width = math.min(
-              widget.pageWidth,
-              constraints.maxWidth.isFinite
-                  ? constraints.maxWidth - 24.0
-                  : widget.pageWidth,
+            final maxDisplayWidth =
+                constraints.hasBoundedWidth && constraints.maxWidth.isFinite
+                ? math.max(1.0, constraints.maxWidth - 24.0)
+                : widget.pageWidth;
+            final maxDisplayHeight =
+                constraints.hasBoundedHeight && constraints.maxHeight.isFinite
+                ? math.max(1.0, constraints.maxHeight - 24.0)
+                : widget.pageHeight;
+            final displayScale = math.min(
+              maxDisplayWidth / widget.pageWidth,
+              maxDisplayHeight / widget.pageHeight,
             );
-            if (!width.isFinite || width <= 0) width = widget.pageWidth;
+            final displaySize = Size(
+              widget.pageWidth * displayScale,
+              widget.pageHeight * displayScale,
+            );
 
-            final height = width * widget.pageHeight / widget.pageWidth;
-            final margin = widget.pageMargin * width / widget.pageWidth;
-            final systemRanges = _systemRanges(width - margin * 2.0);
-            final systems = _systems(systemRanges);
-            final systemsPerPage = _systemsPerPage();
-            _playbackSystemRanges = systemRanges;
-            _playbackSystemsPerPage = systemsPerPage;
-            final pages = _pages(systems, systemsPerPage);
+            final layout = (widget.cache ?? ScoreLayoutCache.shared).getOrBuild(
+              score: widget.score,
+              mode: ScoreLayoutMode.paged,
+              metadata: _metadata,
+              theme: widget.theme,
+              availableWidth: widget.pageWidth,
+              staffSpace: widget.staffSpace,
+              staffGap: widget.staffGap,
+              pageWidth: widget.pageWidth,
+              pageHeight: widget.pageHeight,
+              pageMargin: widget.pageMargin,
+            );
+            _layout = layout;
+            _reportLayout(layout);
+            final height = layout.pageSize.height;
+            final pages = layout.pages;
             if (_controller.pageCount != pages.length) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted) _controller.setPageCount(pages.length);
@@ -262,28 +320,31 @@ class _PagedScoreViewState extends State<PagedScoreView> {
                       : const PageScrollPhysics(),
                   onPageChanged: _controller.setCurrentPage,
                   itemBuilder: (context, index) => Center(
-                    child: InteractiveViewer(
-                      transformationController: _controller.transformationFor(
-                        index,
-                      ),
-                      minScale: 1.0,
-                      maxScale: 4.0,
-                      panEnabled: _controller.currentScale > 1.01,
-                      scaleEnabled: true,
-                      boundaryMargin: const EdgeInsets.all(200),
-                      clipBehavior: Clip.hardEdge,
-                      child: _ScorePage(
-                        systems: pages[index],
-                        width: width,
-                        height: height,
-                        margin: margin,
-                        staffSpace: widget.staffSpace,
-                        metadata: _metadata,
-                        theme: widget.theme,
-                        onNoteTap: widget.onNoteTap,
-                        onNoteTapWithPosition: widget.onNoteTapWithPosition,
-                        onMeasureTap: widget.onMeasureTap,
-                        playbackPosition: widget.playbackPosition,
+                    child: SizedBox.fromSize(
+                      size: displaySize,
+                      child: InteractiveViewer(
+                        transformationController: _controller.transformationFor(
+                          index,
+                        ),
+                        minScale: 1.0,
+                        maxScale: 4.0,
+                        panEnabled: _controller.currentScale > 1.01,
+                        scaleEnabled: true,
+                        boundaryMargin: const EdgeInsets.all(200),
+                        clipBehavior: Clip.hardEdge,
+                        child: FittedBox(
+                          fit: BoxFit.fill,
+                          child: _ScorePage(
+                            score: widget.score,
+                            layout: layout,
+                            page: pages[index],
+                            staffSpace: widget.staffSpace,
+                            onNoteTap: widget.onNoteTap,
+                            onNoteTapWithPosition: widget.onNoteTapWithPosition,
+                            onMeasureTap: widget.onMeasureTap,
+                            playbackPosition: widget.playbackPosition,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -295,160 +356,23 @@ class _PagedScoreViewState extends State<PagedScoreView> {
       },
     );
   }
-
-  /// Uses the same greedy system ranges as [GrandStaffPainter], ensuring that
-  /// pagination follows the actual engraving layout at this page width.
-  List<({int start, int end})> _systemRanges(double contentWidth) {
-    final probe = GrandStaffPainter(
-      groups: widget.score.staffGroups,
-      staffSpace: widget.staffSpace,
-      metadata: _metadata,
-      theme: widget.theme,
-      availableWidth: math.max(1.0, contentWidth),
-      staffGap: widget.staffSpace * 11.0,
-    );
-    return probe.systemRanges;
-  }
-
-  List<Score> _systems(List<({int start, int end})> ranges) {
-    if (ranges.isEmpty) return const [];
-    return [for (final range in ranges) _sliceScore(range.start, range.end)];
-  }
-
-  int _systemsPerPage() {
-    final staffCount = widget.score.staffCount;
-    final staffGap = widget.staffSpace * 11.0;
-    final systemBlockHeight =
-        math.max(0, staffCount - 1) * staffGap + widget.staffSpace * 10.0;
-    final systemHeight = systemBlockHeight + widget.staffSpace * 2.0;
-    final systemGap = widget.staffSpace * 4.0;
-    final contentHeight =
-        widget.pageHeight -
-        widget.pageMargin * 2.0 -
-        (_hasHeader ? widget.staffSpace * 12.0 : 0.0);
-    return math.max(
-      1,
-      ((contentHeight + systemGap) / (systemHeight + systemGap)).floor(),
-    );
-  }
-
-  bool get _hasHeader =>
-      widget.score.title?.isNotEmpty == true ||
-      widget.score.subtitle?.isNotEmpty == true ||
-      widget.score.composer?.isNotEmpty == true ||
-      widget.score.arranger?.isNotEmpty == true ||
-      widget.score.copyright?.isNotEmpty == true;
-
-  List<List<Score>> _pages(List<Score> systems, int systemsPerPage) {
-    if (systems.isEmpty) return const [];
-
-    return [
-      for (var start = 0; start < systems.length; start += systemsPerPage)
-        systems.sublist(
-          start,
-          math.min(start + systemsPerPage, systems.length),
-        ),
-    ];
-  }
-
-  Score _sliceScore(int start, int endInclusive) {
-    return widget.score.copyWith(
-      staffGroups: [
-        for (final group in widget.score.staffGroups)
-          group.copyWith(
-            staves: [
-              for (final staff in group.staves)
-                _sliceStaff(staff, start, endInclusive),
-            ],
-          ),
-      ],
-    );
-  }
-
-  Staff _sliceStaff(Staff source, int start, int endInclusive) {
-    if (source.measures.isEmpty || start >= source.measures.length) {
-      return Staff(
-        lineCount: source.lineCount,
-        name: source.name,
-        abbreviation: source.abbreviation,
-      );
-    }
-
-    final actualEnd = math.min(endInclusive + 1, source.measures.length);
-    final selected = source.measures.sublist(start, actualEnd);
-    if (start == 0 || selected.isEmpty) {
-      return Staff(
-        measures: selected,
-        lineCount: source.lineCount,
-        name: source.name,
-        abbreviation: source.abbreviation,
-      );
-    }
-
-    // Carry state into a new system so clefs, keys, and meters remain readable
-    // when the source MusicXML only declares them at the beginning or at a
-    // later change point.
-    final first = selected.first;
-    final firstSystemMeasure = Measure(
-      autoBeaming: first.autoBeaming,
-      beamingMode: first.beamingMode,
-      manualBeamGroups: first.manualBeamGroups,
-      inheritedTimeSignature: first.inheritedTimeSignature,
-      number: first.number,
-    );
-    final carried = <MusicalElement?>[
-      if (!_hasElement<Clef>(first)) _latest<Clef>(source, start),
-      if (!_hasElement<KeySignature>(first))
-        _latest<KeySignature>(source, start),
-      if (!_hasElement<TimeSignature>(first))
-        _latest<TimeSignature>(source, start),
-    ];
-    firstSystemMeasure.elements.addAll(carried.whereType<MusicalElement>());
-    firstSystemMeasure.elements.addAll(first.elements);
-
-    return Staff(
-      lineCount: source.lineCount,
-      name: source.name,
-      abbreviation: source.abbreviation,
-      measures: [firstSystemMeasure, ...selected.skip(1)],
-    );
-  }
-
-  bool _hasElement<T>(Measure measure) {
-    return measure.elements.any((element) => element is T);
-  }
-
-  T? _latest<T>(Staff staff, int before) {
-    for (var index = before - 1; index >= 0; index--) {
-      for (final element in staff.measures[index].elements.reversed) {
-        if (element is T) return element as T;
-      }
-    }
-    return null;
-  }
 }
 
 class _ScorePage extends StatelessWidget {
-  final List<Score> systems;
-  final double width;
-  final double height;
-  final double margin;
+  final Score score;
+  final ScoreLayout layout;
+  final ScorePageLayout page;
   final double staffSpace;
-  final SmuflMetadata metadata;
-  final MusicScoreTheme theme;
   final ValueChanged<Note>? onNoteTap;
   final ValueChanged<ScoreNoteTap>? onNoteTapWithPosition;
   final ValueChanged<ScoreMeasureTap>? onMeasureTap;
   final ValueListenable<ScorePlaybackPosition?>? playbackPosition;
 
   const _ScorePage({
-    required this.systems,
-    required this.width,
-    required this.height,
-    required this.margin,
+    required this.score,
+    required this.layout,
+    required this.page,
     required this.staffSpace,
-    required this.metadata,
-    required this.theme,
     required this.onNoteTap,
     required this.onNoteTapWithPosition,
     required this.onMeasureTap,
@@ -457,48 +381,33 @@ class _ScorePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final contentWidth = math.max(1.0, width - margin * 2.0);
-    final systemGap = staffSpace * 4.0;
-    final header = systems.firstOrNull;
     return Material(
       color: Colors.white,
       elevation: 2.0,
       child: SizedBox(
-        width: width,
-        height: height,
+        width: page.size.width,
+        height: page.size.height,
         child: Padding(
-          padding: EdgeInsets.all(margin),
+          padding: EdgeInsets.all(layout.pageMargin),
           child: ClipRect(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (header != null &&
-                    (header.title?.isNotEmpty == true ||
-                        header.subtitle?.isNotEmpty == true ||
-                        header.composer?.isNotEmpty == true ||
-                        header.arranger?.isNotEmpty == true ||
-                        header.copyright?.isNotEmpty == true))
+                if (page.headerHeight > 0)
                   _ScoreHeader(
-                    score: header,
-                    width: contentWidth,
+                    score: score,
+                    width: page.contentBounds.width,
                     staffSpace: staffSpace,
                   ),
-                for (var index = 0; index < systems.length; index++) ...[
-                  SizedBox(
-                    width: contentWidth,
-                    child: GrandStaff(
-                      groups: systems[index].staffGroups,
-                      staffSpace: staffSpace,
-                      metadata: metadata,
-                      theme: theme,
-                      onNoteTap: onNoteTap,
-                      onNoteTapWithPosition: onNoteTapWithPosition,
-                      onMeasureTap: onMeasureTap,
-                      playbackPosition: playbackPosition,
-                    ),
-                  ),
-                  if (index < systems.length - 1) SizedBox(height: systemGap),
-                ],
+                ScoreLayoutRegion(
+                  layout: layout,
+                  firstSystem: page.firstSystemIndex,
+                  lastSystem: page.lastSystemIndex,
+                  onNoteTap: onNoteTap,
+                  onNoteTapWithPosition: onNoteTapWithPosition,
+                  onMeasureTap: onMeasureTap,
+                  playbackPosition: playbackPosition,
+                ),
               ],
             ),
           ),

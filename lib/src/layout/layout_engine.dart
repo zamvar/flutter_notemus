@@ -215,6 +215,8 @@ class LayoutEngine {
   final double availableWidth;
   final double staffSpace;
   final SmuflMetadata? metadata; // ✅ Tipagem correta aplicada
+  final List<MusicalElement> initialSystemElements;
+  final TimeSignature? initialTimeSignature;
 
   /// Final horizontal bounds for each local measure after justification.
   /// Used by the score playhead to stay aligned with the rendered spacing.
@@ -237,7 +239,10 @@ class LayoutEngine {
   /// Within-measure accidental display decision per note (Behind Bars rule),
   /// resolved from the model so layout width and rendering agree.
   late final Map<Note, AccidentalDisplay> accidentalDecisions =
-      AccidentalResolver.resolve(staff.measures);
+      AccidentalResolver.resolve(
+        staff.measures,
+        initialKeyCount: _initialKeyCount,
+      );
 
   // Configuresção de validação (silenciosa by default)
   final bool verboseValidation;
@@ -265,6 +270,8 @@ class LayoutEngine {
     required this.availableWidth,
     this.staffSpace = 12.0,
     this.metadata,
+    this.initialSystemElements = const [],
+    this.initialTimeSignature,
     this.verboseValidation = false, // Silencioso por padrão
     spacing.SpacingPreferences? spacingPreferences,
   }) {
@@ -289,6 +296,13 @@ class LayoutEngine {
       noteheadWidth: noteheadBlackWidth * staffSpace,
       positioningEngine: positioningEngine,
     );
+  }
+
+  int get _initialKeyCount {
+    for (final element in initialSystemElements.reversed) {
+      if (element is KeySignature) return element.count;
+    }
+    return 0;
   }
 
   /// Effective accidental glyph after within-measure resolution: null = hide
@@ -386,10 +400,21 @@ class LayoutEngine {
     final measureStartIndices = <int, int>{};
 
     // System de inheritance de TimeSignature
-    TimeSignature? currentTimeSignature;
+    TimeSignature? currentTimeSignature = initialTimeSignature;
     // Running clef/key, restated at the start of each new system.
     Clef? currentClef;
     KeySignature? currentKey;
+
+    if (initialSystemElements.isNotEmpty) {
+      for (final element in initialSystemElements) {
+        cursor.addElement(element, positionedElements);
+        cursor.advance(_getElementWidthSimple(element));
+        if (element is Clef) currentClef = element;
+        if (element is KeySignature) currentKey = element;
+        if (element is TimeSignature) currentTimeSignature = element;
+      }
+      cursor.advance(staffSpace);
+    }
 
     // Contador de validação (only for estatísticas)
     int validMeasures = 0;
@@ -1026,6 +1051,7 @@ class LayoutEngine {
   double _getRhythmicValue(MusicalElement element) {
     if (element is Note) return element.duration.realValue;
     if (element is Rest) return element.duration.realValue;
+    if (element is Space) return element.musicalValue;
     if (element is Chord) return element.duration.realValue;
     if (element is Tuplet) return element.totalDuration;
     return 0.0;
@@ -1330,6 +1356,10 @@ class LayoutEngine {
 
     if (element is Rest) {
       return 1.5 * staffSpace;
+    }
+
+    if (element is Space) {
+      return 0.0;
     }
 
     if (element is Chord) {
@@ -1720,6 +1750,8 @@ class LayoutEngine {
       prevDuration = previousElement.duration.type;
     } else if (previousElement is Rest) {
       prevDuration = previousElement.duration.type;
+    } else if (previousElement is Space) {
+      prevDuration = previousElement.duration.type;
     }
 
     // No previous rhythmic element (start of measure/system): use base spacing.
@@ -1772,7 +1804,7 @@ class LayoutEngine {
 
     // Calculate position initial no measure (for detectar anacrusis)
     for (final element in elements) {
-      if (element is Note || element is Rest) {
+      if (element is Note || element is Rest || element is Space) {
         break;
       }
     }

@@ -211,8 +211,7 @@ void _buildMeasureXml(XmlBuilder builder, Measure measure, int number) {
                       ClefType.treble8va || ClefType.bass8va => 1,
                       ClefType.treble8vb ||
                       ClefType.bass8vb ||
-                      ClefType.c8vb =>
-                        -1,
+                      ClefType.c8vb => -1,
                       ClefType.treble15ma || ClefType.bass15ma => 2,
                       ClefType.treble15mb || ClefType.bass15mb => -2,
                       _ => 0,
@@ -220,8 +219,7 @@ void _buildMeasureXml(XmlBuilder builder, Measure measure, int number) {
                     builder.element('sign', nest: sign);
                     builder.element('line', nest: line);
                     if (octaveChange != 0) {
-                      builder.element('clef-octave-change',
-                          nest: octaveChange);
+                      builder.element('clef-octave-change', nest: octaveChange);
                     }
                   },
                 );
@@ -252,13 +250,18 @@ void _buildMeasureXml(XmlBuilder builder, Measure measure, int number) {
           if (vi > 0) {
             final back = _voiceDurationDivisions(voices[vi - 1]);
             if (back > 0) {
-              builder.element('backup',
-                  nest: () => builder.element('duration', nest: back));
+              builder.element(
+                'backup',
+                nest: () => builder.element('duration', nest: back),
+              );
             }
           }
           for (final element in voices[vi].elements) {
-            _buildMeasureElement(builder, element,
-                voiceNumber: voices[vi].number);
+            _buildMeasureElement(
+              builder,
+              element,
+              voiceNumber: voices[vi].number,
+            );
           }
         }
       } else {
@@ -272,31 +275,62 @@ void _buildMeasureXml(XmlBuilder builder, Measure measure, int number) {
 
 /// Dispatches one measure element to its MusicXML builder, tagging notes with
 /// [voiceNumber] when set (multi-voice).
-void _buildMeasureElement(XmlBuilder builder, MusicalElement element,
-    {int? voiceNumber}) {
+void _buildMeasureElement(
+  XmlBuilder builder,
+  MusicalElement element, {
+  int? voiceNumber,
+}) {
   if (element is Note) {
     _buildNoteXml(builder, element, voiceNumber: voiceNumber);
   } else if (element is Rest) {
     _buildRestXml(builder, element, voiceNumber: voiceNumber);
+  } else if (element is Space) {
+    builder.element(
+      'forward',
+      nest: () {
+        builder.element(
+          'duration',
+          nest: (element.musicalValue * 4 * _kDivisions).round(),
+        );
+        if (voiceNumber != null) {
+          builder.element('voice', nest: voiceNumber);
+        }
+      },
+    );
   } else if (element is Chord) {
     for (int index = 0; index < element.notes.length; index++) {
-      _buildNoteXml(builder, element.notes[index],
-          isChordTone: index > 0, voiceNumber: voiceNumber);
+      _buildNoteXml(
+        builder,
+        element.notes[index],
+        isChordTone: index > 0,
+        voiceNumber: voiceNumber,
+      );
     }
   } else if (element is Tuplet) {
     for (final inner in element.elements) {
       if (inner is Note) {
-        _buildNoteXml(builder, inner,
-            tuplet: element.ratio, voiceNumber: voiceNumber);
+        _buildNoteXml(
+          builder,
+          inner,
+          tuplet: element.ratio,
+          voiceNumber: voiceNumber,
+        );
       } else if (inner is Rest) {
-        _buildRestXml(builder, inner,
-            tuplet: element.ratio, voiceNumber: voiceNumber);
+        _buildRestXml(
+          builder,
+          inner,
+          tuplet: element.ratio,
+          voiceNumber: voiceNumber,
+        );
       } else if (inner is Chord) {
         for (int i = 0; i < inner.notes.length; i++) {
-          _buildNoteXml(builder, inner.notes[i],
-              isChordTone: i > 0,
-              tuplet: element.ratio,
-              voiceNumber: voiceNumber);
+          _buildNoteXml(
+            builder,
+            inner.notes[i],
+            isChordTone: i > 0,
+            tuplet: element.ratio,
+            voiceNumber: voiceNumber,
+          );
         }
       }
     }
@@ -327,6 +361,8 @@ int _voiceDurationDivisions(Voice voice) {
       total += _durationDivisions(el.duration, factor);
     } else if (el is Rest) {
       total += _durationDivisions(el.duration, factor);
+    } else if (el is Space) {
+      total += (el.musicalValue * 4 * _kDivisions * factor).round();
     } else if (el is Chord) {
       total += _durationDivisions(el.duration, factor);
     } else if (el is Tuplet) {
@@ -354,8 +390,7 @@ void _buildBarlineXml(XmlBuilder builder, Barline barline) {
     BarlineType.final_ ||
     BarlineType.lightHeavy ||
     BarlineType.repeatBackward ||
-    BarlineType.repeatBoth =>
-      'light-heavy',
+    BarlineType.repeatBoth => 'light-heavy',
     BarlineType.repeatForward || BarlineType.heavyLight => 'heavy-light',
     BarlineType.heavyHeavy => 'heavy-heavy',
     BarlineType.dashed => 'dashed',
@@ -380,8 +415,13 @@ void _buildBarlineXml(XmlBuilder builder, Barline barline) {
   );
 }
 
-void _buildNoteXml(XmlBuilder builder, Note note,
-    {bool isChordTone = false, TupletRatio? tuplet, int? voiceNumber}) {
+void _buildNoteXml(
+  XmlBuilder builder,
+  Note note, {
+  bool isChordTone = false,
+  TupletRatio? tuplet,
+  int? voiceNumber,
+}) {
   builder.element(
     'note',
     nest: () {
@@ -403,8 +443,10 @@ void _buildNoteXml(XmlBuilder builder, Note note,
       );
       // Grace notes carry no <duration> in MusicXML.
       if (!note.isGraceNote) {
-        builder.element('duration',
-            nest: _durationDivisions(note.duration, tuplet?.modifier ?? 1.0));
+        builder.element(
+          'duration',
+          nest: _durationDivisions(note.duration, tuplet?.modifier ?? 1.0),
+        );
       }
       if (voiceNumber != null) {
         builder.element('voice', nest: voiceNumber);
@@ -526,47 +568,52 @@ void _buildNoteXml(XmlBuilder builder, Note note,
 }
 
 String? _ornamentToString(OrnamentType type) => switch (type) {
-      OrnamentType.trill ||
-      OrnamentType.trillNatural ||
-      OrnamentType.trillSharp ||
-      OrnamentType.trillFlat ||
-      OrnamentType.shortTrill ||
-      OrnamentType.pralltriller =>
-        'trill-mark',
-      OrnamentType.mordent => 'mordent',
-      OrnamentType.invertedMordent => 'inverted-mordent',
-      OrnamentType.turn => 'turn',
-      OrnamentType.turnInverted || OrnamentType.invertedTurn => 'inverted-turn',
-      OrnamentType.turnSlash => 'turn',
-      _ => null,
-    };
+  OrnamentType.trill ||
+  OrnamentType.trillNatural ||
+  OrnamentType.trillSharp ||
+  OrnamentType.trillFlat ||
+  OrnamentType.shortTrill ||
+  OrnamentType.pralltriller => 'trill-mark',
+  OrnamentType.mordent => 'mordent',
+  OrnamentType.invertedMordent => 'inverted-mordent',
+  OrnamentType.turn => 'turn',
+  OrnamentType.turnInverted || OrnamentType.invertedTurn => 'inverted-turn',
+  OrnamentType.turnSlash => 'turn',
+  _ => null,
+};
 
 /// MusicXML `<accidental>` name for a chromatic alteration in semitones.
 String? _accidentalNameFromAlter(double alter) => switch (alter) {
-      2.0 => 'double-sharp',
-      1.0 => 'sharp',
-      0.0 => 'natural',
-      -1.0 => 'flat',
-      -2.0 => 'flat-flat',
-      _ => null,
-    };
+  2.0 => 'double-sharp',
+  1.0 => 'sharp',
+  0.0 => 'natural',
+  -1.0 => 'flat',
+  -2.0 => 'flat-flat',
+  _ => null,
+};
 
 String _syllabicToString(SyllableType type) => switch (type) {
-      SyllableType.single => 'single',
-      SyllableType.initial => 'begin',
-      SyllableType.middle => 'middle',
-      SyllableType.hyphen => 'middle',
-      SyllableType.terminal => 'end',
-    };
+  SyllableType.single => 'single',
+  SyllableType.initial => 'begin',
+  SyllableType.middle => 'middle',
+  SyllableType.hyphen => 'middle',
+  SyllableType.terminal => 'end',
+};
 
-void _buildRestXml(XmlBuilder builder, Rest rest,
-    {TupletRatio? tuplet, int? voiceNumber}) {
+void _buildRestXml(
+  XmlBuilder builder,
+  Rest rest, {
+  TupletRatio? tuplet,
+  int? voiceNumber,
+}) {
   builder.element(
     'note',
     nest: () {
       builder.element('rest');
-      builder.element('duration',
-          nest: _durationDivisions(rest.duration, tuplet?.modifier ?? 1.0));
+      builder.element(
+        'duration',
+        nest: _durationDivisions(rest.duration, tuplet?.modifier ?? 1.0),
+      );
       if (voiceNumber != null) {
         builder.element('voice', nest: voiceNumber);
       }

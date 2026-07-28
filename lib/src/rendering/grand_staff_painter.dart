@@ -75,6 +75,9 @@ class GrandStaffPainter extends CustomPainter {
   final SmuflMetadata metadata;
   final MusicScoreTheme theme;
   final double availableWidth;
+  final ({int start, int end})? measureRange;
+  final bool wrapSystems;
+  final bool fitSystemsToWidth;
 
   /// Baseline-to-baseline vertical distance between adjacent staves.
   final double staffGap;
@@ -84,6 +87,7 @@ class GrandStaffPainter extends CustomPainter {
   /// measures so barlines line up).
   late final List<List<_StaffLayout>> _systems;
   late final List<double> _systemScales;
+  late final List<double> _systemNaturalWidths;
 
   /// Inclusive source-measure ranges used for each rendered system.
   ///
@@ -93,6 +97,58 @@ class GrandStaffPainter extends CustomPainter {
 
   List<({int start, int end})> get systemRanges =>
       List.unmodifiable(_systemRanges);
+
+  int get systemCount => _systems.length;
+  double get bracePadding => _bracePad;
+  double get totalWidth {
+    if (fitSystemsToWidth) return availableWidth;
+    final naturalWidth = _systemNaturalWidths.fold<double>(
+      0,
+      (maximum, width) => math.max(maximum, width),
+    );
+    return math.max(availableWidth, naturalWidth);
+  }
+
+  double systemScaleAt(int index) => _systemScales[index];
+
+  Rect systemBounds(int index) {
+    assert(index >= 0 && index < systemCount);
+    return Rect.fromLTWH(
+      0,
+      index * systemBlockHeight,
+      totalWidth,
+      systemBlockHeight + (index == systemCount - 1 ? staffSpace * 2.0 : 0),
+    );
+  }
+
+  double heightForSystemRange(int firstSystem, int lastSystem) {
+    if (systemCount == 0) return 0;
+    final first = firstSystem.clamp(0, systemCount - 1);
+    final last = lastSystem.clamp(first, systemCount - 1);
+    return (last - first + 1) * systemBlockHeight + staffSpace * 2.0;
+  }
+
+  /// Source notes represented by the current layout.
+  ///
+  /// This supports conservation tests while the public immutable score-layout
+  /// API is being introduced.
+  @visibleForTesting
+  Set<Note> get debugRenderedNotes {
+    final notes = Set<Note>.identity();
+    for (final system in _systems) {
+      for (final layout in system) {
+        for (final positioned in layout.elements) {
+          for (final candidate in _positionedNotes(
+            positioned.element,
+            positioned.position.dx,
+          )) {
+            notes.add(candidate.note);
+          }
+        }
+      }
+    }
+    return Set<Note>.unmodifiable(notes);
+  }
 
   /// Left padding reserved for the brace/bracket (and group name).
   late final double _bracePad;
@@ -119,6 +175,9 @@ class GrandStaffPainter extends CustomPainter {
     required this.metadata,
     required this.theme,
     required this.availableWidth,
+    this.measureRange,
+    this.wrapSystems = true,
+    this.fitSystemsToWidth = true,
     double? staffGap,
   }) : assert(
          staffGroup != null || groups != null,
@@ -140,30 +199,65 @@ class GrandStaffPainter extends CustomPainter {
     _measureIndicesByNumber = measureIndicesByNumber;
     _hasExplicitMeasureNumbers = hasExplicitMeasureNumbers;
     _bracePad = _calculateBracePad();
-    _systemRanges = _computeSystemRanges();
+    final requestedRange = measureRange;
+    if (requestedRange == null && wrapSystems) {
+      _systemRanges = _computeSystemRanges();
+    } else if (requestedRange == null) {
+      final measureCount = _allStaves
+          .map((staff) => staff.measures.length)
+          .fold<int>(0, math.max);
+      _systemRanges = measureCount == 0
+          ? const []
+          : [(start: 0, end: measureCount - 1)];
+    } else {
+      final measureCount = _allStaves
+          .map((staff) => staff.measures.length)
+          .fold<int>(0, math.max);
+      if (measureCount == 0) {
+        _systemRanges = const [];
+      } else {
+        final start = requestedRange.start.clamp(0, measureCount - 1);
+        final end = requestedRange.end.clamp(start, measureCount - 1);
+        _systemRanges = [(start: start, end: end)];
+      }
+    }
     _systems = [
       for (final range in _systemRanges) _layoutSystem(range.start, range.end),
     ];
+    _systemNaturalWidths = _calculateSystemNaturalWidths();
     _systemScales = _calculateSystemScales();
   }
 
   /// Lays out + aligns one system's measures (inclusive [a]..[b]) across staves.
   List<_StaffLayout> _layoutSystem(int a, int b) {
-    final layouts = [
-      for (final staff in _allStaves)
-        _layoutSubStaff(_systemStaff(staff, a, b)),
-    ];
+    final layouts = <_StaffLayout>[];
+    for (final staff in _allStaves) {
+      final slice = _systemStaff(staff, a, b);
+      layouts.add(
+        _layoutSubStaff(
+          slice.staff,
+          initialSystemElements: slice.initialSystemElements,
+          initialTimeSignature: slice.initialTimeSignature,
+        ),
+      );
+    }
     _alignStaves(layouts);
     return layouts;
   }
 
-  _StaffLayout _layoutSubStaff(Staff staff) {
+  _StaffLayout _layoutSubStaff(
+    Staff staff, {
+    required List<MusicalElement> initialSystemElements,
+    required TimeSignature? initialTimeSignature,
+  }) {
     final engine = LayoutEngine(
       staff,
       // Very wide so a system never wraps internally — breaks are decided here.
       availableWidth: (availableWidth - _bracePad) * 1000,
       staffSpace: staffSpace,
       metadata: metadata,
+      initialSystemElements: initialSystemElements,
+      initialTimeSignature: initialTimeSignature,
     );
     final result = engine.layoutWithSignature();
     return _StaffLayout(result.elements, engine);
@@ -172,40 +266,68 @@ class GrandStaffPainter extends CustomPainter {
   /// Builds a sub-[Staff] holding measures [a]..[b] of [staff]; for a system
   /// that doesn't start the piece, the prevailing clef and key are restated at
   /// the start (Gould/Verovio).
-  Staff _systemStaff(Staff staff, int a, int b) {
+  ({
+    Staff staff,
+    List<MusicalElement> initialSystemElements,
+    TimeSignature? initialTimeSignature,
+  })
+  _systemStaff(Staff staff, int a, int b) {
     Clef? clef;
     KeySignature? key;
+    TimeSignature? timeSignature;
     for (var i = 0; i < a && i < staff.measures.length; i++) {
-      for (final e in staff.measures[i].elements) {
+      for (final e in _allElements(staff.measures[i])) {
         if (e is Clef) clef = e;
         if (e is KeySignature) key = e;
+        if (e is TimeSignature) timeSignature = e;
       }
     }
-    final measures = <Measure>[];
-    for (var i = a; i <= b && i < staff.measures.length; i++) {
-      final orig = staff.measures[i];
-      if (i == a && a > 0) {
-        final m = Measure(number: orig.number);
-        if (!orig.elements.any((e) => e is Clef) && clef != null) m.add(clef);
-        if (!orig.elements.any((e) => e is KeySignature) &&
-            key != null &&
-            key.count != 0) {
-          m.add(key);
-        }
-        for (final e in orig.elements) {
-          m.add(e);
-        }
-        measures.add(m);
-      } else {
-        measures.add(orig);
-      }
+    if (staff.measures.isEmpty || a >= staff.measures.length) {
+      return (
+        staff: Staff(
+          lineCount: staff.lineCount,
+          name: staff.name,
+          abbreviation: staff.abbreviation,
+        ),
+        initialSystemElements: const [],
+        initialTimeSignature: timeSignature,
+      );
     }
-    return Staff(
-      measures: measures,
-      lineCount: staff.lineCount,
-      name: staff.name,
-      abbreviation: staff.abbreviation,
+
+    final end = math.min(b + 1, staff.measures.length);
+    final measures = staff.measures.sublist(a, end);
+    final firstElements = _allElements(measures.first).toList();
+    final initialSystemElements = <MusicalElement>[
+      if (a > 0 &&
+          !firstElements.any((element) => element is Clef) &&
+          clef != null)
+        clef,
+      if (a > 0 &&
+          !firstElements.any((element) => element is KeySignature) &&
+          key != null &&
+          key.count != 0)
+        key,
+    ];
+
+    return (
+      staff: Staff(
+        measures: measures,
+        lineCount: staff.lineCount,
+        name: staff.name,
+        abbreviation: staff.abbreviation,
+      ),
+      initialSystemElements: initialSystemElements,
+      initialTimeSignature: timeSignature,
     );
+  }
+
+  Iterable<MusicalElement> _allElements(Measure measure) sync* {
+    yield* measure.elements;
+    if (measure is MultiVoiceMeasure) {
+      for (final voice in measure.sortedVoices) {
+        yield* voice.elements;
+      }
+    }
   }
 
   double _calculateBracePad() {
@@ -251,7 +373,7 @@ class GrandStaffPainter extends CustomPainter {
     final nMeasures = _allStaves
         .map((s) => s.measures.length)
         .fold<int>(0, (a, b) => a > b ? a : b);
-    if (nMeasures == 0) return [(start: 0, end: 0)];
+    if (nMeasures == 0) return const [];
 
     final widths = List<double>.filled(nMeasures, 0);
     for (final staff in _allStaves) {
@@ -286,8 +408,7 @@ class GrandStaffPainter extends CustomPainter {
     return ranges;
   }
 
-  List<double> _calculateSystemScales() {
-    final usable = math.max(1.0, availableWidth - _bracePad);
+  List<double> _calculateSystemNaturalWidths() {
     return [
       for (final system in _systems)
         () {
@@ -297,9 +418,19 @@ class GrandStaffPainter extends CustomPainter {
               requiredWidth = math.max(requiredWidth, element.position.dx);
             }
           }
-          requiredWidth += staffSpace * 2.0;
-          return math.min(1.0, usable / math.max(usable, requiredWidth));
+          return _bracePad + requiredWidth + staffSpace * 2.0;
         }(),
+    ];
+  }
+
+  List<double> _calculateSystemScales() {
+    if (!fitSystemsToWidth) {
+      return List<double>.filled(_systems.length, 1.0);
+    }
+    final usable = math.max(1.0, availableWidth - _bracePad);
+    return [
+      for (final naturalWidth in _systemNaturalWidths)
+        math.min(1.0, usable / math.max(usable, naturalWidth - _bracePad)),
     ];
   }
 
@@ -398,21 +529,37 @@ class GrandStaffPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    paintSystemRange(canvas, size);
+  }
+
+  void paintSystemRange(
+    Canvas canvas,
+    Size size, {
+    int firstSystem = 0,
+    int? lastSystem,
+  }) {
     if (metadata.isNotLoaded || _systems.isEmpty) return;
+    final first = firstSystem.clamp(0, _systems.length - 1);
+    final last = (lastSystem ?? _systems.length - 1).clamp(
+      first,
+      _systems.length - 1,
+    );
 
     // Shift the whole system right to leave room for the brace/bracket.
+    canvas.save();
     canvas.translate(_bracePad, 0);
 
     final baseline0 = staffSpace * 5.0;
-    for (var sysIdx = 0; sysIdx < _systems.length; sysIdx++) {
+    for (var sysIdx = first; sysIdx <= last; sysIdx++) {
       final layouts = _systems[sysIdx];
       if (layouts.isEmpty) continue;
       canvas.save();
-      canvas.translate(0, sysIdx * systemBlockHeight);
+      canvas.translate(0, (sysIdx - first) * systemBlockHeight);
       canvas.scale(_systemScales[sysIdx], 1.0);
       _paintSystem(canvas, size, layouts, baseline0, sysIdx);
       canvas.restore();
     }
+    canvas.restore();
   }
 
   void _paintSystem(
@@ -514,19 +661,34 @@ class GrandStaffPainter extends CustomPainter {
     Size size,
     ScorePlaybackPosition? position,
   ) {
+    paintPlayheadRange(canvas, size, position);
+  }
+
+  void paintPlayheadRange(
+    Canvas canvas,
+    Size size,
+    ScorePlaybackPosition? position, {
+    int firstSystem = 0,
+    int? lastSystem,
+  }) {
     if (metadata.isNotLoaded || _systems.isEmpty) return;
+    final first = firstSystem.clamp(0, _systems.length - 1);
+    final last = (lastSystem ?? _systems.length - 1).clamp(
+      first,
+      _systems.length - 1,
+    );
 
     canvas.save();
     canvas.translate(_bracePad, 0);
     final baseline0 = staffSpace * 5.0;
-    for (var systemIndex = 0; systemIndex < _systems.length; systemIndex++) {
+    for (var systemIndex = first; systemIndex <= last; systemIndex++) {
       final placement = _playheadForSystem(systemIndex, position);
       if (placement == null) continue;
 
       final layouts = _systems[systemIndex];
       if (layouts.isEmpty) continue;
       canvas.save();
-      canvas.translate(0, systemIndex * systemBlockHeight);
+      canvas.translate(0, (systemIndex - first) * systemBlockHeight);
       canvas.scale(_systemScales[systemIndex], 1.0);
       final topY = baseline0 - staffSpace * 2;
       final bottomY =
@@ -544,13 +706,25 @@ class GrandStaffPainter extends CustomPainter {
     canvas.restore();
   }
 
-  bool hasPlayhead(ScorePlaybackPosition? position) {
+  bool hasPlayhead(
+    ScorePlaybackPosition? position, {
+    int firstSystem = 0,
+    int? lastSystem,
+  }) {
     if (position == null) return false;
     final measureIndex = _measureIndexForNumber(position.measureNumber);
     if (measureIndex == null) return false;
-    return _systemRanges.any(
-      (range) => measureIndex >= range.start && measureIndex <= range.end,
+    if (_systemRanges.isEmpty) return false;
+    final first = firstSystem.clamp(0, _systemRanges.length - 1);
+    final last = (lastSystem ?? _systemRanges.length - 1).clamp(
+      first,
+      _systemRanges.length - 1,
     );
+    for (var index = first; index <= last; index++) {
+      final range = _systemRanges[index];
+      if (measureIndex >= range.start && measureIndex <= range.end) return true;
+    }
+    return false;
   }
 
   /// Resolves a local canvas position to the measure under the tap.
@@ -558,11 +732,16 @@ class GrandStaffPainter extends CustomPainter {
   /// The hit test follows the same system scale and measure bounds used by
   /// painting, so it stays aligned when the layout wraps or compresses a
   /// system to fit the available width.
-  int? measureAt(Offset position) {
+  int? measureAt(Offset position, {int firstSystem = 0, int? lastSystem}) {
     if (_systems.isEmpty || _allStaves.isEmpty) return null;
+    final first = firstSystem.clamp(0, _systems.length - 1);
+    final last = (lastSystem ?? _systems.length - 1).clamp(
+      first,
+      _systems.length - 1,
+    );
 
-    for (var systemIndex = 0; systemIndex < _systems.length; systemIndex++) {
-      final systemY = position.dy - systemIndex * systemBlockHeight;
+    for (var systemIndex = first; systemIndex <= last; systemIndex++) {
+      final systemY = position.dy - (systemIndex - first) * systemBlockHeight;
       if (systemY < -staffSpace * 4.0 ||
           systemY > systemBlockHeight + staffSpace * 4.0) {
         continue;
@@ -604,6 +783,47 @@ class GrandStaffPainter extends CustomPainter {
     return null;
   }
 
+  int? measureIndexForNumber(int number) => _measureIndexForNumber(number);
+
+  int? systemIndexForMeasureIndex(int measureIndex) {
+    final index = _systemRanges.indexWhere(
+      (range) => measureIndex >= range.start && measureIndex <= range.end,
+    );
+    return index < 0 ? null : index;
+  }
+
+  Rect? measureBoundsForIndex(int measureIndex) {
+    final systemIndex = systemIndexForMeasureIndex(measureIndex);
+    if (systemIndex == null) return null;
+    final range = _systemRanges[systemIndex];
+    final layouts = _systems[systemIndex];
+    if (layouts.isEmpty) return null;
+    final localMeasure = measureIndex - range.start;
+    final bounds = layouts.first.engine.measureBounds[localMeasure];
+    if (bounds == null) return null;
+    final scale = _systemScales[systemIndex];
+    return Rect.fromLTRB(
+      _bracePad + bounds.start * scale,
+      systemIndex * systemBlockHeight,
+      _bracePad + bounds.end * scale,
+      (systemIndex + 1) * systemBlockHeight,
+    );
+  }
+
+  Offset? playbackOffset(ScorePlaybackPosition? position) {
+    if (position == null) return null;
+    final measureIndex = _measureIndexForNumber(position.measureNumber);
+    if (measureIndex == null) return null;
+    final systemIndex = systemIndexForMeasureIndex(measureIndex);
+    if (systemIndex == null) return null;
+    final placement = _playheadForSystem(systemIndex, position);
+    if (placement == null) return null;
+    return Offset(
+      _bracePad + placement.x * _systemScales[systemIndex],
+      systemIndex * systemBlockHeight + systemBlockHeight / 2,
+    );
+  }
+
   _PlayheadPlacement? _playheadForSystem(
     int systemIndex,
     ScorePlaybackPosition? position,
@@ -626,7 +846,12 @@ class GrandStaffPainter extends CustomPainter {
         measure.timeSignature ?? measure.inheritedTimeSignature;
     // MusicXML's measureValue is whole-note relative (4/4 == 1.0), while
     // playback positions use quarter-note beats (4/4 == 4.0).
-    final measureBeats = timeSignature == null
+    final sourceBeats = measure.sourceDuration == null
+        ? null
+        : measure.sourceDuration! * 4.0;
+    final measureBeats = sourceBeats != null && sourceBeats > 0
+        ? sourceBeats
+        : timeSignature == null
         ? 4.0
         : timeSignature.measureValue * 4.0;
     final fraction = ((position.beat - 1.0) / measureBeats).clamp(0.0, 1.0);
@@ -716,8 +941,10 @@ class GrandStaffPainter extends CustomPainter {
 
   void _drawMeasureNumber(Canvas canvas, double baseline0, int systemIndex) {
     if (systemIndex == 0 || _allStaves.isEmpty) return;
-    final number = _allStaves.first.measures.firstOrNull?.number;
-    if (number == null) return;
+    final measureIndex = _systemRanges[systemIndex].start;
+    if (measureIndex >= _allStaves.first.measures.length) return;
+    final number =
+        _allStaves.first.measures[measureIndex].number ?? measureIndex + 1;
     final painter = TextPainter(
       text: TextSpan(
         text: '$number',
@@ -943,8 +1170,18 @@ class GrandStaffPainter extends CustomPainter {
   ///
   /// Coordinates are in the local space of the [CustomPaint], including the
   /// brace padding and stacked-system offsets applied in [paint].
-  Note? noteAt(Offset position, {Note? lastNote}) {
+  Note? noteAt(
+    Offset position, {
+    Note? lastNote,
+    int firstSystem = 0,
+    int? lastSystem,
+  }) {
     if (_systems.isEmpty) return null;
+    final first = firstSystem.clamp(0, _systems.length - 1);
+    final last = (lastSystem ?? _systems.length - 1).clamp(
+      first,
+      _systems.length - 1,
+    );
 
     Note? closestBroad;
     var closestBroadDistance = double.infinity;
@@ -955,10 +1192,10 @@ class GrandStaffPainter extends CustomPainter {
     final lastIndex = lastNote == null ? -1 : sequence.indexOf(lastNote);
     const edgeRadius = 60.0;
 
-    for (var sysIdx = 0; sysIdx < _systems.length; sysIdx++) {
+    for (var sysIdx = first; sysIdx <= last; sysIdx++) {
       final systemPosition = Offset(
         (position.dx - _bracePad) / _systemScales[sysIdx],
-        position.dy - sysIdx * systemBlockHeight,
+        position.dy - (sysIdx - first) * systemBlockHeight,
       );
       if (systemPosition.dy < -edgeRadius ||
           systemPosition.dy > systemBlockHeight + edgeRadius) {
@@ -1061,10 +1298,13 @@ class GrandStaffPainter extends CustomPainter {
     }
     if (element is Tuplet) {
       final spacing = staffSpace * 2.5;
-      return [
-        for (var index = 0; index < element.notes.length; index++)
-          (note: element.notes[index], x: baseX + index * spacing),
-      ];
+      final notes = <({Note note, double x})>[];
+      for (var index = 0; index < element.elements.length; index++) {
+        notes.addAll(
+          _positionedNotes(element.elements[index], baseX + index * spacing),
+        );
+      }
+      return notes;
     }
     return const [];
   }
@@ -1094,6 +1334,12 @@ class GrandStaffPainter extends CustomPainter {
   bool shouldRepaint(covariant GrandStaffPainter oldDelegate) {
     return !identical(oldDelegate.groups, groups) ||
         oldDelegate.staffSpace != staffSpace ||
-        oldDelegate.availableWidth != availableWidth;
+        oldDelegate.staffGap != staffGap ||
+        oldDelegate.availableWidth != availableWidth ||
+        oldDelegate.measureRange != measureRange ||
+        oldDelegate.wrapSystems != wrapSystems ||
+        oldDelegate.fitSystemsToWidth != fitSystemsToWidth ||
+        !identical(oldDelegate.metadata, metadata) ||
+        !identical(oldDelegate.theme, theme);
   }
 }

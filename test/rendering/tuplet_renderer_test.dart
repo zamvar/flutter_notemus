@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_notemus/flutter_notemus.dart';
 import 'package:flutter_notemus/src/rendering/renderers/articulation_renderer.dart';
+import 'package:flutter_notemus/src/rendering/renderers/chord_renderer.dart';
 import 'package:flutter_notemus/src/rendering/renderers/note_renderer.dart';
 import 'package:flutter_notemus/src/rendering/renderers/ornament_renderer.dart';
 import 'package:flutter_notemus/src/rendering/renderers/rest_renderer.dart';
@@ -56,6 +57,15 @@ void main() {
       glyphSize: glyphSize,
       ornamentRenderer: ornamentRenderer,
     );
+    final chordRenderer = ChordRenderer(
+      coordinates: coordinates,
+      metadata: metadata,
+      theme: theme,
+      glyphSize: glyphSize,
+      staffLineThickness: 1.0,
+      stemThickness: 1.0,
+      noteRenderer: noteRenderer,
+    );
 
     renderer = TupletRenderer(
       coordinates: coordinates,
@@ -63,6 +73,7 @@ void main() {
       theme: theme,
       glyphSize: glyphSize,
       noteRenderer: noteRenderer,
+      chordRenderer: chordRenderer,
       restRenderer: restRenderer,
       positioningEngine: positioningEngine,
     );

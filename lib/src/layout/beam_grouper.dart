@@ -57,6 +57,8 @@ class BeamGrouper {
         );
       } else if (element is Rest) {
         items.add(_BeamingItem.rest(duration: element.duration.realValue));
+      } else if (element is Space) {
+        items.add(_BeamingItem.rest(duration: element.musicalValue));
       }
     }
 
@@ -135,8 +137,8 @@ class BeamGrouper {
     // by the beat (denominator unit). Previously the break only fired when a
     // SINGLE note spanned two beats — which never happens for eighths — so a
     // full bar of eighths beamed as one group (V4).
-    final beatUnit = (timeSignature.numerator == 4 &&
-            timeSignature.denominator == 4)
+    final beatUnit =
+        (timeSignature.numerator == 4 && timeSignature.denominator == 4)
         ? 2.0 / timeSignature.denominator
         : 1.0 / timeSignature.denominator;
 

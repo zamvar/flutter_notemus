@@ -120,7 +120,16 @@ class _VoiceAccumulator {
   }
 
   bool mergeChordNote(Note note) {
-    final List<MusicalElement> container = activeTuplet?.elements ?? elements;
+    var container = activeTuplet?.elements ?? elements;
+    final lastElement = elements.lastOrNull;
+    if (activeTuplet == null && lastElement is Tuplet) {
+      // MusicXML writes chord tones after their principal note. When the
+      // principal note also closes a tuplet, the tuplet has already moved into
+      // [elements] before the remaining `<chord/>` notes arrive. Keep those
+      // tones attached to the final tuplet event instead of creating an extra
+      // rhythmic chord after the tuplet.
+      container = lastElement.elements;
+    }
     final int targetIndex = _findMergeableChordIndex(container);
     if (targetIndex < 0) return false;
 
@@ -224,6 +233,7 @@ bool _isSystemElement(MusicalElement element) {
 bool _isRhythmicElement(MusicalElement element) {
   return element is Note ||
       element is Rest ||
+      element is Space ||
       element is Chord ||
       element is Tuplet;
 }
@@ -1209,8 +1219,12 @@ class _MusicXmlImportParser {
             name: name == null ? null : '$name$suffix',
             abbreviation: label?.abbreviation,
           );
+          var divisions = 1;
           for (final m in part.findElements('measure')) {
-            staff.add(_parseMeasure(m, staffFilter: filter));
+            divisions = _musicXmlDivisions(m, divisions);
+            staff.add(
+              _parseMeasure(m, staffFilter: filter, divisions: divisions),
+            );
           }
           partStaves.add(staff);
         }
@@ -1264,8 +1278,10 @@ class _MusicXmlImportParser {
           name: label?.name,
           abbreviation: label?.abbreviation,
         );
+        var divisions = 1;
         for (final m in partMeasures[p] ?? const <XmlElement>[]) {
-          staff.add(_parseMeasure(m));
+          divisions = _musicXmlDivisions(m, divisions);
+          staff.add(_parseMeasure(m, divisions: divisions));
         }
         groups.add(StaffGroup(staves: [staff]));
       }
@@ -1438,14 +1454,17 @@ class _MusicXmlImportParser {
     }
 
     final staff = Staff();
+    var divisions = 1;
     for (final measureElement in parts[partIndex].findElements('measure')) {
-      staff.add(_parseMeasure(measureElement));
+      divisions = _musicXmlDivisions(measureElement, divisions);
+      staff.add(_parseMeasure(measureElement, divisions: divisions));
     }
     return staff;
   }
 
   Staff _parseTimewise(XmlElement root) {
     final staff = Staff();
+    var divisions = 1;
     for (final measureElement in root.findElements('measure')) {
       final parts = measureElement.findElements('part').toList();
       if (parts.isEmpty) continue;
@@ -1454,15 +1473,23 @@ class _MusicXmlImportParser {
           'Requested partIndex $partIndex, but a score-timewise measure contains ${parts.length} part(s).',
         );
       }
-      staff.add(_parseMeasure(parts[partIndex]));
+      divisions = _musicXmlDivisions(parts[partIndex], divisions);
+      staff.add(_parseMeasure(parts[partIndex], divisions: divisions));
     }
     return staff;
   }
 
   /// Parses one MusicXML measure. When [staffFilter] is set (multi-staff part),
   /// only notes whose `staff` matches and clefs for that staff are kept.
-  Measure _parseMeasure(XmlElement measureElement, {int? staffFilter}) {
+  Measure _parseMeasure(
+    XmlElement measureElement, {
+    int? staffFilter,
+    required int divisions,
+  }) {
     final number = int.tryParse(measureElement.getAttribute('number') ?? '');
+    final sourceDuration = _musicXmlMeasureDuration(measureElement, divisions);
+    final isImplicit =
+        measureElement.getAttribute('implicit')?.toLowerCase() == 'yes';
     final Map<int, _VoiceAccumulator> voices = <int, _VoiceAccumulator>{};
     final List<MusicalElement> metadataElements = <MusicalElement>[];
     TimeSignature? currentTimeSignature;
@@ -1526,14 +1553,34 @@ class _MusicXmlImportParser {
           );
           break;
         case 'backup':
+          break;
         case 'forward':
+          final forwardStaff = _asInt(_childText(child, 'staff')) ?? 1;
+          if (staffFilter != null && forwardStaff != staffFilter) break;
+          final duration = _asInt(_childText(child, 'duration')) ?? 0;
+          if (duration <= 0) break;
+          final voiceNumber = _asInt(_childText(child, 'voice')) ?? 1;
+          final musicalValue = duration / (divisions * 4.0);
+          voice(voiceNumber).append(
+            Space(
+              duration: _nearestDuration(musicalValue),
+              musicalValue: musicalValue,
+            ),
+          );
           break;
       }
     }
 
-    if (voices.isEmpty || (voices.length == 1 && !voices.containsKey(2))) {
-      final measure = Measure();
-      measure.number = number;
+    for (final accumulator in voices.values) {
+      accumulator.finishTuplet();
+    }
+
+    if (voices.isEmpty || (voices.length == 1 && voices.containsKey(1))) {
+      final measure = Measure(
+        number: number,
+        sourceDuration: sourceDuration,
+        isImplicit: isImplicit,
+      );
       for (final element in voice(1).elements) {
         _appendElementToMeasure(measure, element);
       }
@@ -1541,7 +1588,10 @@ class _MusicXmlImportParser {
     }
 
     final measure = MultiVoiceMeasure();
-    measure.number = number;
+    measure
+      ..number = number
+      ..sourceDuration = sourceDuration
+      ..isImplicit = isImplicit;
     for (final element in metadataElements.where(_isSystemElement)) {
       _appendElementToMeasure(measure, element);
     }
@@ -1549,7 +1599,6 @@ class _MusicXmlImportParser {
     final voiceNumbers = voices.keys.toList()..sort();
     for (final number in voiceNumbers) {
       final accumulator = voices[number]!;
-      accumulator.finishTuplet();
       measure.addVoice(Voice(number: number, elements: accumulator.elements));
     }
     return measure;
@@ -1662,6 +1711,7 @@ List<MusicalElement> _parseMusicXmlAttributes(
 
 List<MusicalElement> _parseMusicXmlDirections(XmlElement directionElement) {
   final List<MusicalElement> result = <MusicalElement>[];
+  var hasMetronomeTempo = false;
   for (final directionType in directionElement.findElements('direction-type')) {
     for (final child in directionType.children.whereType<XmlElement>()) {
       switch (child.name.local) {
@@ -1684,6 +1734,7 @@ List<MusicalElement> _parseMusicXmlDirections(XmlElement directionElement) {
           }
           break;
         case 'metronome':
+          hasMetronomeTempo = true;
           result.add(
             TempoMark(
               beatUnit:
@@ -1722,6 +1773,25 @@ List<MusicalElement> _parseMusicXmlDirections(XmlElement directionElement) {
           }
           break;
       }
+    }
+  }
+
+  if (!hasMetronomeTempo) {
+    final soundTempo = double.tryParse(
+      directionElement
+              .findElements('sound')
+              .firstOrNull
+              ?.getAttribute('tempo') ??
+          '',
+    );
+    if (soundTempo != null && soundTempo > 0) {
+      result.add(
+        TempoMark(
+          beatUnit: DurationType.quarter,
+          bpm: soundTempo.round(),
+          showMetronome: false,
+        ),
+      );
     }
   }
 
@@ -1878,6 +1948,66 @@ Duration _musicXmlDurationFromNote(XmlElement noteElement) {
     _parseDurationType(_childText(noteElement, 'type')) ?? DurationType.quarter,
     dots: noteElement.findElements('dot').length,
   );
+}
+
+int _musicXmlDivisions(XmlElement measureElement, int inherited) {
+  final value = _asInt(
+    measureElement
+        .findElements('attributes')
+        .firstOrNull
+        ?.findElements('divisions')
+        .firstOrNull
+        ?.innerText,
+  );
+  return value != null && value > 0 ? value : inherited;
+}
+
+double? _musicXmlMeasureDuration(XmlElement measureElement, int divisions) {
+  if (divisions <= 0) return null;
+
+  var cursor = 0;
+  var extent = 0;
+  for (final child in measureElement.children.whereType<XmlElement>()) {
+    final duration = _asInt(_childText(child, 'duration')) ?? 0;
+    switch (child.name.local) {
+      case 'note':
+        final isChord = child.findElements('chord').isNotEmpty;
+        final isGrace = child.findElements('grace').isNotEmpty;
+        if (!isChord && !isGrace && duration > 0) {
+          cursor += duration;
+          if (cursor > extent) extent = cursor;
+        }
+        break;
+      case 'backup':
+        cursor -= duration;
+        if (cursor < 0) cursor = 0;
+        break;
+      case 'forward':
+        if (duration > 0) {
+          cursor += duration;
+          if (cursor > extent) extent = cursor;
+        }
+        break;
+    }
+  }
+
+  return extent <= 0 ? null : extent / (divisions * 4.0);
+}
+
+Duration _nearestDuration(double musicalValue) {
+  var nearest = const Duration(DurationType.quarter);
+  var nearestDifference = double.infinity;
+  for (final type in DurationType.values) {
+    for (var dots = 0; dots <= 4; dots++) {
+      final candidate = Duration(type, dots: dots);
+      final difference = (candidate.realValue - musicalValue).abs();
+      if (difference < nearestDifference) {
+        nearest = candidate;
+        nearestDifference = difference;
+      }
+    }
+  }
+  return nearest;
 }
 
 List<ArticulationType> _musicXmlArticulations(XmlElement noteElement) {

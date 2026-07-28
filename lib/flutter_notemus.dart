@@ -46,10 +46,13 @@ import 'src/theme/music_score_theme.dart';
 // 🆕 New ARQUITETURA - Toda teoria musical in core/
 export 'core/core.dart';
 export 'midi.dart';
+export 'src/document/notemus_document.dart';
+export 'src/playback/playback_plan.dart';
 
 // Public API exports
 export 'src/theme/music_score_theme.dart';
 export 'src/layout/layout_engine.dart';
+export 'src/layout/score_layout.dart';
 export 'src/parsers/json_parser.dart';
 export 'src/parsers/mei_parser.dart';
 export 'src/parsers/musicxml_parser.dart';
@@ -72,8 +75,11 @@ export 'src/rendering/gregorian/chant_score.dart';
 export 'src/rendering/gregorian/chant_playback.dart';
 export 'src/rendering/gregorian/gabc_parser.dart' show GabcParser, GabcResult;
 export 'src/layout/collision_detector.dart';
-export 'src/widgets/grand_staff.dart' show GrandStaff, ScoreView, ScoreNoteTap;
+export 'src/widgets/grand_staff.dart' show GrandStaff, ScoreView;
 export 'src/widgets/paged_score.dart' show PagedScoreController, PagedScoreView;
+export 'src/widgets/score_interaction.dart';
+export 'src/widgets/score_layout_region.dart';
+export 'src/widgets/score_layout_view.dart';
 
 /// The main Flutter widget for rendering music notetion.
 ///

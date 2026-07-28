@@ -25,9 +25,12 @@ class AccidentalResolver {
   /// Resolves the display decision for every [Note] in [measures] (identity-
   /// keyed), applying the standard within-measure rule and the active key
   /// signature (which persists across measures until changed).
-  static Map<Note, AccidentalDisplay> resolve(List<Measure> measures) {
+  static Map<Note, AccidentalDisplay> resolve(
+    List<Measure> measures, {
+    int initialKeyCount = 0,
+  }) {
     final result = Map<Note, AccidentalDisplay>.identity();
-    var keyCount = 0;
+    var keyCount = initialKeyCount;
 
     for (final measure in measures) {
       // step+octave -> alteration currently sounding this measure.
@@ -78,8 +81,7 @@ class AccidentalResolver {
       return;
     }
     state[key] = alter;
-    out[note] =
-        alter == 0 ? AccidentalDisplay.natural : AccidentalDisplay.show;
+    out[note] = alter == 0 ? AccidentalDisplay.natural : AccidentalDisplay.show;
   }
 
   /// Alteration a key signature of [keyCount] (>0 sharps, <0 flats) applies to

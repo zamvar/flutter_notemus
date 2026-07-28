@@ -9,6 +9,7 @@ import '../../core/ornament.dart';
 import '../../core/repeat.dart';
 import '../../core/rest.dart';
 import '../../core/score.dart';
+import '../../core/space.dart';
 import '../../core/staff.dart';
 import '../../core/tempo.dart';
 import '../../core/text.dart';
@@ -16,6 +17,7 @@ import '../../core/time_signature.dart';
 import '../../core/tuplet.dart';
 import '../../core/voice.dart';
 import '../../core/volta_bracket.dart';
+import '../playback/score_playback_timeline.dart';
 import 'midi_models.dart';
 
 class MidiMapper {
@@ -24,6 +26,12 @@ class MidiMapper {
     MidiGenerationOptions options = const MidiGenerationOptions(),
     String trackName = 'Staff 1',
   }) {
+    final timeline = ScorePlaybackTimeline.fromStaff(
+      staff,
+      ticksPerQuarter: options.ticksPerQuarter,
+      repeatDefaultTimes: options.repeatDefaultTimes,
+      maxRepeatCycles: options.maxRepeatCycles,
+    );
     final instrument =
         options.instrumentsByStaff[0] ?? options.defaultInstrument;
     final result = _buildTrackFromStaff(
@@ -31,17 +39,27 @@ class MidiMapper {
       options: options,
       instrument: instrument,
       trackName: trackName,
+      playedMeasures: timeline.occurrences,
     );
 
+    final conductorEvents = <MidiEvent>[
+      MidiEvent.tempo(tick: 0, bpm: options.defaultBpm),
+      ...result.metaEvents,
+    ];
+    _dedupeMetaEvents(conductorEvents, defaultBpm: options.defaultBpm);
     final tracks = <MidiTrack>[
-      MidiTrack(name: 'Conductor', channel: 0, events: result.metaEvents),
+      MidiTrack(
+        name: 'Conductor',
+        channel: 0,
+        events: _sortedEvents(conductorEvents),
+      ),
       result.track,
     ];
 
-    if (options.includeMetronome && result.playedMeasures.isNotEmpty) {
+    if (options.includeMetronome && timeline.occurrences.isNotEmpty) {
       tracks.add(
         _buildMetronomeTrack(
-          playedMeasures: result.playedMeasures,
+          playedMeasures: timeline.occurrences,
           options: options,
         ),
       );
@@ -50,7 +68,7 @@ class MidiMapper {
     return MidiSequence(
       ticksPerQuarter: options.ticksPerQuarter,
       tracks: tracks,
-      warnings: result.warnings,
+      warnings: [...timeline.warnings, ...result.warnings],
     );
   }
 
@@ -59,7 +77,13 @@ class MidiMapper {
     MidiGenerationOptions options = const MidiGenerationOptions(),
   }) {
     final staves = score.allStaves;
-    final warnings = <String>[];
+    final timeline = ScorePlaybackTimeline.fromScore(
+      score,
+      ticksPerQuarter: options.ticksPerQuarter,
+      repeatDefaultTimes: options.repeatDefaultTimes,
+      maxRepeatCycles: options.maxRepeatCycles,
+    );
+    final warnings = <String>[...timeline.warnings];
 
     if (staves.isEmpty) {
       return MidiSequence(
@@ -82,6 +106,7 @@ class MidiMapper {
         options: options,
         instrument: instrument,
         trackName: 'Staff ${staffIndex + 1}',
+        playedMeasures: timeline.occurrences,
       );
       results.add(trackResult);
       warnings.addAll(trackResult.warnings);
@@ -124,14 +149,9 @@ _TrackBuildResult _buildTrackFromStaff({
   required MidiGenerationOptions options,
   required MidiInstrumentAssignment instrument,
   required String trackName,
+  required List<ScorePlaybackMeasureOccurrence> playedMeasures,
 }) {
   final warnings = <String>[];
-  final playOrder = _buildPlaybackOrder(staff.measures, options, warnings);
-  final playedMeasures = _buildPlayedMeasureTimeline(
-    staff.measures,
-    playOrder,
-    options.ticksPerQuarter,
-  );
 
   final builder = _TrackEventBuilder(
     channel: instrument.channel,
@@ -146,10 +166,10 @@ _TrackBuildResult _buildTrackFromStaff({
       program: instrument.program.clamp(0, 127),
     ),
   );
-  builder.metaEvents.add(MidiEvent.tempo(tick: 0, bpm: options.defaultBpm));
 
   for (final played in playedMeasures) {
-    final measure = staff.measures[played.measureIndex];
+    if (played.sourceMeasureIndex >= staff.measures.length) continue;
+    final measure = staff.measures[played.sourceMeasureIndex];
     builder.processMeasure(
       measure: measure,
       measureStartTick: played.startTick,
@@ -160,7 +180,11 @@ _TrackBuildResult _buildTrackFromStaff({
 
   final trackEndTick = playedMeasures.isEmpty ? 0 : playedMeasures.last.endTick;
   builder.closeOpenTies(trackEndTick);
-  _dedupeMetaEvents(builder.metaEvents, defaultBpm: options.defaultBpm);
+  _dedupeMetaEvents(
+    builder.metaEvents,
+    defaultBpm: options.defaultBpm,
+    ensureDefaultTempo: false,
+  );
 
   return _TrackBuildResult(
     track: MidiTrack(
@@ -169,7 +193,10 @@ _TrackBuildResult _buildTrackFromStaff({
       events: _sortedEvents(builder.events),
     ),
     metaEvents: _sortedEvents(builder.metaEvents),
-    warnings: <String>[...warnings, ...builder.warnings],
+    warnings: <String>[
+      ...warnings,
+      for (final warning in builder.warnings) '$trackName: $warning',
+    ],
     playedMeasures: playedMeasures,
   );
 }
@@ -223,7 +250,8 @@ class _TrackEventBuilder {
 
         if (localTick > measureEndTick) {
           warnings.add(
-            'Voice ${voice.number} overflowed measure by '
+            'Voice ${voice.number} overflowed measure '
+            '${measure.number ?? '?'} by '
             '${localTick - measureEndTick} ticks.',
           );
         }
@@ -244,7 +272,8 @@ class _TrackEventBuilder {
 
     if (localTick > measureEndTick) {
       warnings.add(
-        'Measure overflowed by ${localTick - measureEndTick} ticks.',
+        'Measure ${measure.number ?? '?'} overflowed by '
+        '${localTick - measureEndTick} ticks.',
       );
     }
 
@@ -311,6 +340,14 @@ class _TrackEventBuilder {
       );
     }
 
+    if (element is Space) {
+      return (element.musicalValue *
+              4.0 *
+              options.ticksPerQuarter *
+              tupletMultiplier)
+          .round();
+    }
+
     if (element is Tuplet) {
       final tupletRatio = element.ratio.modifier;
       int localTick = tick;
@@ -332,8 +369,12 @@ class _TrackEventBuilder {
         // unit (e.g. half-note = 80  ->  quarter = 160).
         final beatQuarters = music.Duration(element.beatUnit).realValue * 4.0;
         final quarterBpm = (element.bpm! * beatQuarters).round();
-        metaEvents.add(MidiEvent.tempo(
-            tick: tick, bpm: quarterBpm < 1 ? element.bpm! : quarterBpm));
+        metaEvents.add(
+          MidiEvent.tempo(
+            tick: tick,
+            bpm: quarterBpm < 1 ? element.bpm! : quarterBpm,
+          ),
+        );
       }
       if (element.text != null && element.text!.trim().isNotEmpty) {
         metaEvents.add(
@@ -405,21 +446,29 @@ class _TrackEventBuilder {
       );
       // Borrow from the preceding note when there is room, otherwise crush at
       // the beat. Either way the cursor does not advance (no overflow).
-      final graceStart = startTick >= graceTicks ? startTick - graceTicks : startTick;
-      final graceEnd =
-          startTick >= graceTicks ? startTick : startTick + graceTicks;
+      final graceStart = startTick >= graceTicks
+          ? startTick - graceTicks
+          : startTick;
+      final graceEnd = startTick >= graceTicks
+          ? startTick
+          : startTick + graceTicks;
       final graceMidi = note.pitch.midiNumber.clamp(0, 127);
-      final graceVel = (note.dynamicElement != null
-              ? velocityFromDynamic(note.dynamicElement!.type)
-              : (_voiceVelocity[voiceNumber] ?? baseVelocity))
-          .clamp(1, 127);
-      events.add(MidiEvent.noteOn(
+      final graceVel =
+          (note.dynamicElement != null
+                  ? velocityFromDynamic(note.dynamicElement!.type)
+                  : (_voiceVelocity[voiceNumber] ?? baseVelocity))
+              .clamp(1, 127);
+      events.add(
+        MidiEvent.noteOn(
           tick: graceStart,
           channel: channel,
           note: graceMidi,
-          velocity: graceVel));
+          velocity: graceVel,
+        ),
+      );
       events.add(
-          MidiEvent.noteOff(tick: graceEnd, channel: channel, note: graceMidi));
+        MidiEvent.noteOff(tick: graceEnd, channel: channel, note: graceMidi),
+      );
       return 0;
     }
 
@@ -521,8 +570,14 @@ class _TrackEventBuilder {
     void emit(int offset, int from, int to) {
       if (to <= from) return;
       final n = (midiNote + offset).clamp(0, 127);
-      events.add(MidiEvent.noteOn(
-          tick: from, channel: channel, note: n, velocity: velocity));
+      events.add(
+        MidiEvent.noteOn(
+          tick: from,
+          channel: channel,
+          note: n,
+          velocity: velocity,
+        ),
+      );
       events.add(MidiEvent.noteOff(tick: to, channel: channel, note: n));
     }
 
@@ -699,24 +754,25 @@ class _TrackEventBuilder {
 /// Duration "gate" fraction for an articulation (how much of the written
 /// duration actually sounds): staccato shortens, tenuto is near-full.
 double _articulationGate(ArticulationType a) => switch (a) {
-      ArticulationType.staccatissimo => 0.25,
-      ArticulationType.staccato => 0.5,
-      ArticulationType.portato => 0.75,
-      ArticulationType.tenuto => 1.0,
-      _ => 1.0,
-    };
+  ArticulationType.staccatissimo => 0.25,
+  ArticulationType.staccato => 0.5,
+  ArticulationType.portato => 0.75,
+  ArticulationType.tenuto => 1.0,
+  _ => 1.0,
+};
 
 /// Velocity multiplier for an accent-type articulation.
 double _articulationAccent(ArticulationType a) => switch (a) {
-      ArticulationType.strongAccent || ArticulationType.marcato => 1.35,
-      ArticulationType.accent => 1.2,
-      ArticulationType.tenuto => 1.05,
-      _ => 1.0,
-    };
+  ArticulationType.strongAccent || ArticulationType.marcato => 1.35,
+  ArticulationType.accent => 1.2,
+  ArticulationType.tenuto => 1.05,
+  _ => 1.0,
+};
 
 /// Combined gate (min) and accent (max) for a note's articulations.
 ({double gate, double accent}) _articulationEffect(
-    List<ArticulationType> arts) {
+  List<ArticulationType> arts,
+) {
   var gate = 1.0;
   var accent = 1.0;
   for (final a in arts) {
@@ -732,51 +788,13 @@ class _TrackBuildResult {
   final MidiTrack track;
   final List<MidiEvent> metaEvents;
   final List<String> warnings;
-  final List<_PlayedMeasureTiming> playedMeasures;
+  final List<ScorePlaybackMeasureOccurrence> playedMeasures;
 
   const _TrackBuildResult({
     required this.track,
     required this.metaEvents,
     required this.warnings,
     required this.playedMeasures,
-  });
-}
-
-class _RepeatSection {
-  final int startMeasure;
-  final int endMeasure;
-  final int times;
-
-  const _RepeatSection({
-    required this.startMeasure,
-    required this.endMeasure,
-    required this.times,
-  });
-}
-
-class _PlaybackMeasureRef {
-  final int measureIndex;
-  final int repeatPass;
-
-  const _PlaybackMeasureRef({
-    required this.measureIndex,
-    required this.repeatPass,
-  });
-}
-
-class _PlayedMeasureTiming {
-  final int measureIndex;
-  final int repeatPass;
-  final int startTick;
-  final int endTick;
-  final TimeSignature? timeSignature;
-
-  const _PlayedMeasureTiming({
-    required this.measureIndex,
-    required this.repeatPass,
-    required this.startTick,
-    required this.endTick,
-    required this.timeSignature,
   });
 }
 
@@ -804,92 +822,13 @@ class _TieState {
   const _TieState({required this.endTick});
 }
 
-List<_PlaybackMeasureRef> _buildPlaybackOrder(
-  List<Measure> measures,
-  MidiGenerationOptions options,
-  List<String> warnings,
-) {
-  if (measures.isEmpty) return const <_PlaybackMeasureRef>[];
-
-  final sections = _detectRepeatSections(measures, options);
-  final byStart = <int, _RepeatSection>{
-    for (final section in sections) section.startMeasure: section,
-  };
-
-  final order = <_PlaybackMeasureRef>[];
-  int cursor = 0;
-
-  while (cursor < measures.length) {
-    final section = byStart[cursor];
-    if (section == null) {
-      order.add(_PlaybackMeasureRef(measureIndex: cursor, repeatPass: 1));
-      cursor++;
-      continue;
-    }
-
-    final times = section.times <= 0 ? 1 : section.times;
-    if (times > options.maxRepeatCycles) {
-      warnings.add(
-        'Repeat section at measure ${section.startMeasure + 1} capped at '
-        '${options.maxRepeatCycles} cycles.',
-      );
-    }
-
-    final effectiveTimes = times.clamp(1, options.maxRepeatCycles);
-    for (int pass = 1; pass <= effectiveTimes; pass++) {
-      for (int i = section.startMeasure; i <= section.endMeasure; i++) {
-        if (_shouldPlayMeasureOnPass(measures[i], pass)) {
-          order.add(_PlaybackMeasureRef(measureIndex: i, repeatPass: pass));
-        }
-      }
-    }
-
-    cursor = section.endMeasure + 1;
-  }
-
-  return order;
-}
-
-List<_RepeatSection> _detectRepeatSections(
-  List<Measure> measures,
-  MidiGenerationOptions options,
-) {
-  final sections = <_RepeatSection>[];
-  int currentStart = 0;
-
-  for (int i = 0; i < measures.length; i++) {
-    final measure = measures[i];
-    if (_measureHasRepeatStart(measure)) {
-      currentStart = i;
-    }
-
-    if (_measureHasRepeatEnd(measure)) {
-      final explicitTimes = _repeatTimes(measure);
-      final times = explicitTimes ?? options.repeatDefaultTimes;
-      sections.add(
-        _RepeatSection(
-          startMeasure: currentStart,
-          endMeasure: i,
-          times: times <= 0 ? 1 : times,
-        ),
-      );
-      currentStart = i + 1;
-    }
-  }
-
-  return sections;
-}
-
 bool _measureHasRepeatStart(Measure measure) {
   return measure.elements.any((element) {
     if (element is Barline) {
       return element.type == BarlineType.repeatForward ||
           element.type == BarlineType.repeatBoth;
     }
-    if (element is RepeatMark) {
-      return element.type == RepeatType.start;
-    }
-    return false;
+    return element is RepeatMark && element.type == RepeatType.start;
   });
 }
 
@@ -899,154 +838,8 @@ bool _measureHasRepeatEnd(Measure measure) {
       return element.type == BarlineType.repeatBackward ||
           element.type == BarlineType.repeatBoth;
     }
-    if (element is RepeatMark) {
-      return element.type == RepeatType.end;
-    }
-    return false;
+    return element is RepeatMark && element.type == RepeatType.end;
   });
-}
-
-int? _repeatTimes(Measure measure) {
-  for (final element in measure.elements) {
-    if (element is RepeatMark &&
-        element.type == RepeatType.end &&
-        element.times != null) {
-      return element.times;
-    }
-  }
-  return null;
-}
-
-bool _shouldPlayMeasureOnPass(Measure measure, int pass) {
-  final voltaPasses = _extractVoltaPasses(measure);
-  if (voltaPasses.isEmpty) return true;
-  return voltaPasses.contains(pass);
-}
-
-Set<int> _extractVoltaPasses(Measure measure) {
-  final result = <int>{};
-  for (final element in measure.elements) {
-    if (element is! VoltaBracket) continue;
-
-    result.add(element.number);
-    final label = element.label;
-    if (label == null || label.trim().isEmpty) continue;
-
-    final numbers = RegExp(r'\d+')
-        .allMatches(label)
-        .map((match) => int.tryParse(match.group(0) ?? ''))
-        .whereType<int>()
-        .toList();
-    if (numbers.isEmpty) continue;
-
-    if (label.contains('-') && numbers.length >= 2) {
-      final minNumber = numbers.reduce((a, b) => a < b ? a : b);
-      final maxNumber = numbers.reduce((a, b) => a > b ? a : b);
-      for (int value = minNumber; value <= maxNumber; value++) {
-        result.add(value);
-      }
-    } else {
-      result.addAll(numbers);
-    }
-  }
-  return result;
-}
-
-List<_PlayedMeasureTiming> _buildPlayedMeasureTimeline(
-  List<Measure> measures,
-  List<_PlaybackMeasureRef> playOrder,
-  int ticksPerQuarter,
-) {
-  final timeline = <_PlayedMeasureTiming>[];
-  TimeSignature? currentTimeSignature;
-  int cursor = 0;
-
-  for (final reference in playOrder) {
-    final measure = measures[reference.measureIndex];
-    final measureTimeSignature = measure.timeSignature;
-    if (measureTimeSignature != null) {
-      currentTimeSignature = measureTimeSignature;
-    }
-
-    final activeTimeSignature = measureTimeSignature ?? currentTimeSignature;
-    final measureTicks = _measureLengthTicks(
-      measure: measure,
-      timeSignature: activeTimeSignature,
-      ticksPerQuarter: ticksPerQuarter,
-    );
-
-    timeline.add(
-      _PlayedMeasureTiming(
-        measureIndex: reference.measureIndex,
-        repeatPass: reference.repeatPass,
-        startTick: cursor,
-        endTick: cursor + measureTicks,
-        timeSignature: activeTimeSignature,
-      ),
-    );
-    cursor += measureTicks;
-  }
-
-  return timeline;
-}
-
-int _measureLengthTicks({
-  required Measure measure,
-  required TimeSignature? timeSignature,
-  required int ticksPerQuarter,
-}) {
-  if (timeSignature != null) {
-    final beatsInQuarter =
-        timeSignature.numerator * (4.0 / timeSignature.denominator);
-    final ticks = (beatsInQuarter * ticksPerQuarter).round();
-    return ticks <= 0 ? ticksPerQuarter : ticks;
-  }
-
-  final quarters = _measureLengthInQuarterNotes(measure);
-  final ticks = (quarters * ticksPerQuarter).round();
-  return ticks <= 0 ? ticksPerQuarter * 4 : ticks;
-}
-
-double _measureLengthInQuarterNotes(Measure measure) {
-  if (measure is MultiVoiceMeasure) {
-    double maxLength = 0.0;
-    for (final voice in measure.sortedVoices) {
-      final duration = _elementsLengthInQuarterNotes(voice.elements, 1.0);
-      if (duration > maxLength) {
-        maxLength = duration;
-      }
-    }
-    return maxLength;
-  }
-  return _elementsLengthInQuarterNotes(measure.elements, 1.0);
-}
-
-double _elementsLengthInQuarterNotes(
-  List<MusicalElement> elements,
-  double tupletMultiplier,
-) {
-  double total = 0.0;
-  for (final element in elements) {
-    if (element is Note) {
-      total += element.duration.realValue * 4.0 * tupletMultiplier;
-      continue;
-    }
-    if (element is Rest) {
-      total += element.duration.realValue * 4.0 * tupletMultiplier;
-      continue;
-    }
-    if (element is Chord) {
-      total += element.duration.realValue * 4.0 * tupletMultiplier;
-      continue;
-    }
-    if (element is Tuplet) {
-      total += _elementsLengthInQuarterNotes(
-        element.elements,
-        tupletMultiplier * element.ratio.modifier,
-      );
-    }
-  }
-  return total;
 }
 
 int _durationToTicks({
@@ -1064,7 +857,7 @@ int _durationToTicks({
 }
 
 MidiTrack _buildMetronomeTrack({
-  required List<_PlayedMeasureTiming> playedMeasures,
+  required List<ScorePlaybackMeasureOccurrence> playedMeasures,
   required MidiGenerationOptions options,
 }) {
   final events = <MidiEvent>[];
@@ -1125,18 +918,23 @@ MidiInstrumentAssignment _defaultInstrumentForStaff(
   );
 }
 
-void _dedupeMetaEvents(List<MidiEvent> events, {required int defaultBpm}) {
+void _dedupeMetaEvents(
+  List<MidiEvent> events, {
+  required int defaultBpm,
+  bool ensureDefaultTempo = true,
+}) {
   if (events.isEmpty) {
-    events.add(MidiEvent.tempo(tick: 0, bpm: defaultBpm));
+    if (ensureDefaultTempo) {
+      events.add(MidiEvent.tempo(tick: 0, bpm: defaultBpm));
+    }
     return;
   }
 
   final deduped = <String, MidiEvent>{};
   for (final event in events) {
     final key = switch (event.type) {
-      MidiEventType.tempo => 'tempo:${event.tick}:${event.bpm}',
-      MidiEventType.timeSignature =>
-        'timesig:${event.tick}:${event.numerator}:${event.denominator}',
+      MidiEventType.tempo => 'tempo:${event.tick}',
+      MidiEventType.timeSignature => 'timesig:${event.tick}',
       MidiEventType.marker => 'marker:${event.tick}:${event.markerText}',
       _ => 'meta:${event.type}:${event.tick}',
     };
@@ -1150,7 +948,7 @@ void _dedupeMetaEvents(List<MidiEvent> events, {required int defaultBpm}) {
   final hasTempoAtZero = events.any(
     (event) => event.type == MidiEventType.tempo && event.tick == 0,
   );
-  if (!hasTempoAtZero) {
+  if (ensureDefaultTempo && !hasTempoAtZero) {
     events.add(MidiEvent.tempo(tick: 0, bpm: defaultBpm));
   }
 }

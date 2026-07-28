@@ -3,6 +3,7 @@
 import 'musical_element.dart';
 import 'note.dart';
 import 'rest.dart';
+import 'space.dart';
 import 'time_signature.dart';
 import 'duration.dart';
 
@@ -44,6 +45,16 @@ class Measure {
   /// null = automatic numbering by the layout engine.
   int? number;
 
+  /// Exact rhythmic extent declared by the source, in whole-note units.
+  ///
+  /// MusicXML can contain pickup, shortened, or deliberately overfull
+  /// measures. Playback must use the source cursor extent instead of assuming
+  /// every measure has the nominal time-signature duration.
+  double? sourceDuration;
+
+  /// Whether the source marks this as an implicit measure, such as a pickup.
+  bool isImplicit;
+
   /// Creates a new [Measure].
   ///
   /// [autoBeaming] defaults to `true` so that eighth notes and smaller are
@@ -63,6 +74,8 @@ class Measure {
     this.manualBeamGroups = const [],
     this.inheritedTimeSignature,
     this.number,
+    this.sourceDuration,
+    this.isImplicit = false,
   });
 
   /// Adds a musical element to the measure.
@@ -97,7 +110,7 @@ class Measure {
             'Attempting to add: $elementDuration units\n'
             'Total would be: $afterAdding units\n'
             'EXCESS: ${excess.toStringAsFixed(4)} units\n'
-            'OPERATION BLOCKED — Remove elements or create a new measure!'
+            'OPERATION BLOCKED — Remove elements or create a new measure!',
           );
         }
       }
@@ -115,6 +128,8 @@ class Measure {
         total += element.duration.realValue;
       } else if (element is Rest) {
         total += element.duration.realValue;
+      } else if (element is Space) {
+        total += element.musicalValue;
       } else if (element.runtimeType.toString() == 'Chord') {
         // Use reflection to avoid circular imports
         final dynamic chord = element;
@@ -186,6 +201,8 @@ class Measure {
       return element.duration.realValue;
     } else if (element is Rest) {
       return element.duration.realValue;
+    } else if (element is Space) {
+      return element.musicalValue;
     } else if (element.runtimeType.toString() == 'Chord') {
       final dynamic chord = element;
       return chord.duration?.realValue ?? 0.0;

@@ -7,6 +7,7 @@ import '../../theme/music_score_theme.dart';
 import '../smufl_positioning_engine.dart';
 import '../staff_position_calculator.dart';
 import 'base_glyph_renderer.dart';
+import 'chord_renderer.dart';
 import 'note_renderer.dart';
 import 'rest_renderer.dart';
 
@@ -14,6 +15,7 @@ import 'rest_renderer.dart';
 class TupletRenderer extends BaseGlyphRenderer {
   final MusicScoreTheme theme;
   final NoteRenderer noteRenderer;
+  final ChordRenderer chordRenderer;
   final RestRenderer restRenderer;
   final SMuFLPositioningEngine positioningEngine;
 
@@ -23,6 +25,7 @@ class TupletRenderer extends BaseGlyphRenderer {
     required this.theme,
     required super.glyphSize,
     required this.noteRenderer,
+    required this.chordRenderer,
     required this.restRenderer,
     required this.positioningEngine,
   });
@@ -87,6 +90,29 @@ class TupletRenderer extends BaseGlyphRenderer {
         allPositions.add(Offset(restAnchorX, basePosition.dy));
         spanStartX ??= restAnchorX - (noteHeadWidth * 0.5);
         spanEndX = restAnchorX + (noteHeadWidth * 0.5);
+        currentX += spacing;
+      } else if (element is Chord) {
+        chordRenderer.render(
+          canvas,
+          element,
+          Offset(currentX, basePosition.dy),
+          currentClef,
+        );
+        final chordPositions = [
+          for (final note in element.notes)
+            StaffPositionCalculator.toPixelY(
+              StaffPositionCalculator.calculate(note.pitch, currentClef),
+              coordinates.staffSpace,
+              coordinates.staffBaseline.dy,
+            ),
+        ];
+        final anchorY = chordPositions.isEmpty
+            ? basePosition.dy
+            : chordPositions.reduce((left, right) => left + right) /
+                  chordPositions.length;
+        allPositions.add(Offset(currentX + slotCenterOffset, anchorY));
+        spanStartX ??= currentX;
+        spanEndX = currentX + noteHeadWidth;
         currentX += spacing;
       }
     }
