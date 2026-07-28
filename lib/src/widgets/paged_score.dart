@@ -140,7 +140,7 @@ class _PagedScoreViewState extends State<PagedScoreView> {
   var _ownsController = false;
   ScoreLayout? _layout;
   ScoreLayout? _lastReportedLayout;
-  int? _lastPlaybackMeasureNumber;
+  int? _lastPlaybackMeasureIndex;
 
   @override
   void initState() {
@@ -195,17 +195,17 @@ class _PagedScoreViewState extends State<PagedScoreView> {
   void _handlePlaybackPosition() {
     final position = widget.playbackPosition?.value;
     if (position == null) {
-      _lastPlaybackMeasureNumber = null;
+      _lastPlaybackMeasureIndex = null;
       return;
     }
-    if (position.measureNumber == _lastPlaybackMeasureNumber ||
-        _layout == null) {
+    if (_layout == null) {
       return;
     }
-    _lastPlaybackMeasureNumber = position.measureNumber;
 
-    final measureIndex = _measureIndexForNumber(position.measureNumber);
+    final measureIndex = _measureIndexForPosition(position);
     if (measureIndex == null) return;
+    if (measureIndex == _lastPlaybackMeasureIndex) return;
+    _lastPlaybackMeasureIndex = measureIndex;
     final page = _layout?.pageForMeasureIndex(measureIndex)?.index;
     if (page == null) return;
     if (page == _controller.currentPage || page >= _controller.pageCount) {
@@ -248,6 +248,18 @@ class _PagedScoreViewState extends State<PagedScoreView> {
             fallback < widget.score.allStaves.first.measures.length
         ? fallback
         : null;
+  }
+
+  int? _measureIndexForPosition(ScorePlaybackPosition position) {
+    final sourceIndex = position.sourceMeasureIndex;
+    if (sourceIndex != null &&
+        sourceIndex >= 0 &&
+        widget.score.allStaves.any(
+          (staff) => sourceIndex < staff.measures.length,
+        )) {
+      return sourceIndex;
+    }
+    return _measureIndexForNumber(position.measureNumber);
   }
 
   @override
