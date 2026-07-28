@@ -891,6 +891,27 @@ class LayoutEngine {
     List<PositionedElement> positionedElements,
     bool isFirstInSystem,
   ) {
+    // MusicXML can leave a staff with only a non-1 voice (for example voice 5
+    // on the lower staff of a piano part). The parser keeps shared clef/key/time
+    // elements on the measure itself in that case. They must be laid out before
+    // the voice streams, otherwise the renderer falls back to treble clef and
+    // every note on that staff receives the wrong vertical position.
+    final sharedSystemElements = measure.elements
+        .where(_isSystemElement)
+        .toList(growable: false);
+    for (final element in sharedSystemElements) {
+      cursor.addElement(element, positionedElements);
+      cursor.advance(_getElementWidthSimple(element));
+    }
+    if (sharedSystemElements.isNotEmpty) {
+      cursor.advance(
+        _calculateSpacingAfterSystemElementsCorrected(
+          sharedSystemElements,
+          measure.sortedVoices.expand((voice) => voice.elements).toList(),
+        ),
+      );
+    }
+
     final startX = cursor.currentX;
     double maxAdvanceX = startX;
     // Tracks where musical elements (post clef/key/time) start in voice 1.

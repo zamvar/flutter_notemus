@@ -96,6 +96,37 @@ void main() {
     expect(painter.debugRenderedNotes, hasLength(notes.length));
   });
 
+  test('multi-voice staff keeps its shared bass clef for non-1 voices', () {
+    final note = Note(
+      pitch: const Pitch(step: 'G', octave: 3),
+      duration: const notemus.Duration(DurationType.quarter),
+      voice: 5,
+    );
+    final measure = MultiVoiceMeasure()
+      ..add(Clef(clefType: ClefType.bass))
+      ..addVoice(Voice(number: 5, elements: [note]));
+    final score = Score.singleStaff(Staff(measures: [measure]));
+    final painter = GrandStaffPainter(
+      groups: score.staffGroups,
+      staffSpace: 10,
+      metadata: metadata,
+      theme: const MusicScoreTheme(),
+      availableWidth: 320,
+    );
+
+    final elements = painter.debugPositionedElements.single.single;
+    expect(elements.map((element) => element.element), contains(isA<Clef>()));
+    final positionedNote = elements.firstWhere(
+      (element) => identical(element.element, note),
+    );
+    final bassPosition = StaffPositionCalculator.calculate(
+      note.pitch,
+      Clef(clefType: ClefType.bass),
+    );
+    final expectedY = StaffPositionCalculator.toPixelY(bassPosition, 10, 50);
+    expect(positionedNote.position.dy, closeTo(expectedY, 0.001));
+  });
+
   testWidgets('paged score keeps original measures across every page', (
     tester,
   ) async {

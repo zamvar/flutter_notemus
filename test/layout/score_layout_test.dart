@@ -162,6 +162,52 @@ void main() {
     expect(bounds!.contains(playhead!), isTrue);
   });
 
+  test('playhead prefers the canonical source measure index', () {
+    final first = Measure(number: 7)
+      ..add(Clef(clefType: ClefType.treble))
+      ..add(
+        Note(
+          pitch: const Pitch(step: 'C', octave: 5),
+          duration: const Duration(DurationType.whole),
+        ),
+      );
+    final second = Measure(number: 7)
+      ..add(
+        Note(
+          pitch: const Pitch(step: 'G', octave: 4),
+          duration: const Duration(DurationType.whole),
+        ),
+      );
+    final duplicateNumberScore = Score.singleStaff(
+      Staff(measures: [first, second]),
+    );
+    final layout = ScoreLayout.build(
+      score: duplicateNumberScore,
+      mode: ScoreLayoutMode.continuousVertical,
+      metadata: metadata,
+      theme: const MusicScoreTheme(),
+      availableWidth: 500,
+      staffSpace: 8,
+    );
+
+    final secondMeasurePlayhead = layout.playbackOffset(
+      const ScorePlaybackPosition(
+        measureNumber: 7,
+        sourceMeasureIndex: 1,
+        beat: 1,
+      ),
+    );
+    final firstMeasureBounds = layout.measureBoundsForIndex(0)!;
+    final secondMeasureBounds = layout.measureBoundsForIndex(1)!;
+
+    expect(secondMeasurePlayhead, isNotNull);
+    expect(secondMeasurePlayhead!.dx, greaterThan(firstMeasureBounds.right));
+    expect(
+      secondMeasurePlayhead.dx,
+      greaterThanOrEqualTo(secondMeasureBounds.left),
+    );
+  });
+
   testWidgets('ScoreLayoutView renders vertical and horizontal modes', (
     tester,
   ) async {

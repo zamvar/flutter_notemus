@@ -201,11 +201,13 @@ class _GrandStaffState extends State<GrandStaff> {
       _lastSwipedNote = null;
       return;
     }
+    final measureIndex = painter.measureIndexAt(details.localPosition);
     final measureNumber = painter.measureAt(details.localPosition);
-    if (measureNumber != null) {
+    if (measureIndex != null && measureNumber != null) {
       widget.onMeasureTap?.call(
         ScoreMeasureTap(
           measureNumber: measureNumber,
+          sourceMeasureIndex: measureIndex,
           globalPosition: details.globalPosition,
         ),
       );

@@ -94,15 +94,22 @@ class _ScoreLayoutRegionState extends State<ScoreLayoutRegion> {
       _lastSwipedNote = null;
       return;
     }
-    final measureNumber = _painter.measureAt(
+    final measureIndex = _painter.measureIndexAt(
       details.localPosition,
       firstSystem: widget.firstSystem,
       lastSystem: _lastSystem,
     );
-    if (measureNumber != null) {
+    if (measureIndex != null) {
+      final measureNumber = _painter.measureAt(
+        details.localPosition,
+        firstSystem: widget.firstSystem,
+        lastSystem: _lastSystem,
+      );
+      if (measureNumber == null) return;
       widget.onMeasureTap?.call(
         ScoreMeasureTap(
           measureNumber: measureNumber,
+          sourceMeasureIndex: measureIndex,
           globalPosition: details.globalPosition,
         ),
       );

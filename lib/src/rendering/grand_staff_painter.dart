@@ -32,12 +32,18 @@ class ScorePlaybackPosition {
   /// MusicXML measure number, normally starting at 1.
   final int measureNumber;
 
+  /// Zero-based source measure index from the canonical MusicXML document.
+  /// This is more reliable than [measureNumber] when a score repeats numbers,
+  /// starts with a pickup, or uses non-sequential labels.
+  final int? sourceMeasureIndex;
+
   /// One-based beat within the measure.
   final double beat;
 
   const ScorePlaybackPosition({
     required this.measureNumber,
     required this.beat,
+    this.sourceMeasureIndex,
   });
 }
 
@@ -47,12 +53,17 @@ class ScoreMeasureTap {
   /// did not provide explicit numbers.
   final int measureNumber;
 
+  /// Zero-based source measure index, preserved for scores with duplicate
+  /// displayed measure numbers.
+  final int? sourceMeasureIndex;
+
   /// Screen position of the tap, useful for contextual UI.
   final Offset globalPosition;
 
   const ScoreMeasureTap({
     required this.measureNumber,
     required this.globalPosition,
+    this.sourceMeasureIndex,
   });
 }
 
@@ -61,6 +72,13 @@ class _PlayheadPlacement {
   final double x;
 
   const _PlayheadPlacement({required this.systemIndex, required this.x});
+}
+
+class _RhythmicAnchor {
+  final double beat;
+  final double x;
+
+  const _RhythmicAnchor({required this.beat, required this.x});
 }
 
 /// Renders one or more [StaffGroup]s as a unified, vertically-stacked,
@@ -149,6 +167,18 @@ class GrandStaffPainter extends CustomPainter {
     }
     return Set<Note>.unmodifiable(notes);
   }
+
+  /// Positioned elements grouped by system and staff for geometry regression
+  /// tests. The returned lists are snapshots and do not expose mutable layout
+  /// state.
+  @visibleForTesting
+  List<List<List<PositionedElement>>> get debugPositionedElements => [
+    for (final system in _systems)
+      [
+        for (final staff in system)
+          List<PositionedElement>.unmodifiable(staff.elements),
+      ],
+  ];
 
   /// Left padding reserved for the brace/bracket (and group name).
   late final double _bracePad;
@@ -733,6 +763,16 @@ class GrandStaffPainter extends CustomPainter {
   /// painting, so it stays aligned when the layout wraps or compresses a
   /// system to fit the available width.
   int? measureAt(Offset position, {int firstSystem = 0, int? lastSystem}) {
+    final index = measureIndexAt(
+      position,
+      firstSystem: firstSystem,
+      lastSystem: lastSystem,
+    );
+    if (index == null || _allStaves.isEmpty) return null;
+    return _allStaves.first.measures[index].number ?? index + 1;
+  }
+
+  int? measureIndexAt(Offset position, {int firstSystem = 0, int? lastSystem}) {
     if (_systems.isEmpty || _allStaves.isEmpty) return null;
     final first = firstSystem.clamp(0, _systems.length - 1);
     final last = (lastSystem ?? _systems.length - 1).clamp(
@@ -776,8 +816,7 @@ class GrandStaffPainter extends CustomPainter {
             measureIndex >= _allStaves.first.measures.length) {
           return null;
         }
-        return _allStaves.first.measures[measureIndex].number ??
-            measureIndex + 1;
+        return measureIndex;
       }
     }
     return null;
@@ -812,7 +851,7 @@ class GrandStaffPainter extends CustomPainter {
 
   Offset? playbackOffset(ScorePlaybackPosition? position) {
     if (position == null) return null;
-    final measureIndex = _measureIndexForNumber(position.measureNumber);
+    final measureIndex = _measureIndexForPosition(position);
     if (measureIndex == null) return null;
     final systemIndex = systemIndexForMeasureIndex(measureIndex);
     if (systemIndex == null) return null;
@@ -830,7 +869,7 @@ class GrandStaffPainter extends CustomPainter {
   ) {
     if (position == null || systemIndex >= _systemRanges.length) return null;
 
-    final measureIndex = _measureIndexForNumber(position.measureNumber);
+    final measureIndex = _measureIndexForPosition(position);
     if (measureIndex == null) return null;
     final range = _systemRanges[systemIndex];
     if (measureIndex < range.start || measureIndex > range.end) return null;
@@ -854,12 +893,150 @@ class GrandStaffPainter extends CustomPainter {
         : timeSignature == null
         ? 4.0
         : timeSignature.measureValue * 4.0;
-    final fraction = ((position.beat - 1.0) / measureBeats).clamp(0.0, 1.0);
-    final rhythmicStart = _rhythmicStartForMeasure(layouts, bounds);
-    return _PlayheadPlacement(
+    final targetBeat = (position.beat - 1.0).clamp(0.0, measureBeats);
+    final anchors = _rhythmicAnchorsForMeasure(
       systemIndex: systemIndex,
-      x: rhythmicStart + (bounds.end - rhythmicStart) * fraction,
+      localMeasure: localMeasure,
+      bounds: bounds,
     );
+    final x = anchors.isEmpty
+        ? _rhythmicStartForMeasure(layouts, bounds) +
+              (bounds.end - _rhythmicStartForMeasure(layouts, bounds)) *
+                  (targetBeat / measureBeats)
+        : _interpolateRhythmicX(
+            anchors,
+            targetBeat,
+            measureBeats: measureBeats,
+            measureEnd: bounds.end,
+          );
+    return _PlayheadPlacement(systemIndex: systemIndex, x: x);
+  }
+
+  double _interpolateRhythmicX(
+    List<_RhythmicAnchor> anchors,
+    double targetBeat, {
+    required double measureBeats,
+    required double measureEnd,
+  }) {
+    final first = anchors.first;
+    if (targetBeat <= first.beat) return first.x;
+    for (var index = 1; index < anchors.length; index++) {
+      final next = anchors[index];
+      if (targetBeat > next.beat) continue;
+      final previous = anchors[index - 1];
+      final span = next.beat - previous.beat;
+      if (span <= 0) return next.x;
+      final fraction = ((targetBeat - previous.beat) / span)
+          .clamp(0.0, 1.0)
+          .toDouble();
+      return previous.x + (next.x - previous.x) * fraction;
+    }
+
+    final last = anchors.last;
+    final remaining = measureBeats - last.beat;
+    if (remaining <= 0) return last.x;
+    final fraction = ((targetBeat - last.beat) / remaining)
+        .clamp(0.0, 1.0)
+        .toDouble();
+    return last.x + (measureEnd - last.x) * fraction;
+  }
+
+  List<_RhythmicAnchor> _rhythmicAnchorsForMeasure({
+    required int systemIndex,
+    required int localMeasure,
+    required ({double start, double end}) bounds,
+  }) {
+    final range = _systemRanges[systemIndex];
+    final sourceMeasureIndex = range.start + localMeasure;
+    final anchors = <_RhythmicAnchor>[];
+    final layouts = _systems[systemIndex];
+
+    for (var staffIndex = 0; staffIndex < layouts.length; staffIndex++) {
+      final staff = _allStaves[staffIndex];
+      if (sourceMeasureIndex >= staff.measures.length) continue;
+      final measure = staff.measures[sourceMeasureIndex];
+      final streams = measure is MultiVoiceMeasure
+          ? measure.sortedVoices.map((voice) => voice.elements)
+          : [measure.elements];
+      for (final stream in streams) {
+        var beat = 0.0;
+        for (final element in stream) {
+          final positionedX = _positionedX(
+            layouts[staffIndex].elements,
+            element,
+          );
+          if (positionedX != null) {
+            beat += _appendRhythmicAnchors(
+              anchors,
+              element,
+              x: positionedX,
+              beat: beat,
+            );
+          } else {
+            beat += _rhythmicDurationInBeats(element);
+          }
+        }
+      }
+    }
+
+    anchors.removeWhere(
+      (anchor) =>
+          anchor.x < bounds.start - staffSpace * 2 ||
+          anchor.x > bounds.end + staffSpace * 2,
+    );
+    anchors.sort((a, b) {
+      final beat = a.beat.compareTo(b.beat);
+      return beat != 0 ? beat : a.x.compareTo(b.x);
+    });
+    return anchors;
+  }
+
+  double? _positionedX(
+    List<PositionedElement> elements,
+    MusicalElement element,
+  ) {
+    for (final positioned in elements) {
+      if (identical(positioned.element, element)) return positioned.position.dx;
+    }
+    return null;
+  }
+
+  double _appendRhythmicAnchors(
+    List<_RhythmicAnchor> anchors,
+    MusicalElement element, {
+    required double x,
+    required double beat,
+  }) {
+    if (element is Tuplet) {
+      var childBeat = beat;
+      for (var index = 0; index < element.elements.length; index++) {
+        final child = element.elements[index];
+        _appendRhythmicAnchors(
+          anchors,
+          child,
+          x: x + index * staffSpace * 2.5,
+          beat: childBeat,
+        );
+        childBeat += _rhythmicDurationInBeats(child) * element.ratio.modifier;
+      }
+      return element.totalDuration * 4.0;
+    }
+    if (element is Note ||
+        element is Rest ||
+        element is Chord ||
+        element is Space) {
+      anchors.add(_RhythmicAnchor(beat: beat, x: x));
+    }
+    return _rhythmicDurationInBeats(element);
+  }
+
+  double _rhythmicDurationInBeats(MusicalElement element) {
+    if (element is Note) return element.duration.realValue * 4.0;
+    if (element is Rest) return element.duration.realValue * 4.0;
+    if (element is Chord) return element.duration.realValue * 4.0;
+    if (element is Space) return element.musicalValue * 4.0;
+    if (element is Tuplet) return element.totalDuration * 4.0;
+    return 0.0;
   }
 
   double _rhythmicStartForMeasure(
@@ -893,6 +1070,16 @@ class GrandStaffPainter extends CustomPainter {
             fallback < _allStaves.first.measures.length
         ? fallback
         : null;
+  }
+
+  int? _measureIndexForPosition(ScorePlaybackPosition position) {
+    final sourceIndex = position.sourceMeasureIndex;
+    if (sourceIndex != null &&
+        sourceIndex >= 0 &&
+        _allStaves.any((staff) => sourceIndex < staff.measures.length)) {
+      return sourceIndex;
+    }
+    return _measureIndexForNumber(position.measureNumber);
   }
 
   void _drawStaffLabels(Canvas canvas, double baseline0, int systemIndex) {
